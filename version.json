@@ -1,0 +1,12 @@
+{
+    "version": "1.0.1",
+    "features": [
+        "Added Scripts: AdsCoin",
+        "Added Scripts: SpaceShooter",
+        "Added Scripts: claimcrypto",
+        "Added Scripts: gamefaucet",
+        "Added Scripts: CryptoEarns",
+        "Account Management: Easy to add accounts with proxy support"
+    ],
+    "last_updated": "2026-08-22"
+}

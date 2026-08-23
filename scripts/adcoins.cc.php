@@ -6,9 +6,7 @@ define("APP_HOST", "buxads-Bot");
 define("BASE_DIR", dirname(__DIR__));
 
 // Enable error reporting for debugging
-error_reporting(E_ALL);
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
+error_reporting(0);
 
 // Include functions
 if (!file_exists(BASE_DIR . "/functions/function.php")) {
@@ -197,14 +195,13 @@ function menu() {
     clear();
     echo "\n";
     echo CYAN . "╔═══════════════════════════════════════════════════════════════╗\n" . RESET;
-    echo CYAN . "║" . WHITE . "  🚀  ADCOINS.CC AUTO BOT" . str_repeat(" ", 30) . CYAN . "║\n" . RESET;
+    echo CYAN . "║" . WHITE . "  🚀  adcoins.cc AUTO BOT" . str_repeat(" ", 30) . CYAN . "║\n" . RESET;
     echo CYAN . "╠═══════════════════════════════════════════════════════════════╣\n" . RESET;
     echo CYAN . "║" . WHITE . "  1. Run Account" . str_repeat(" ", 45) . CYAN . "║\n" . RESET;
     echo CYAN . "║" . WHITE . "  2. Add Account" . str_repeat(" ", 45) . CYAN . "║\n" . RESET;
     echo CYAN . "║" . WHITE . "  3. Delete Account" . str_repeat(" ", 43) . CYAN . "║\n" . RESET;
     echo CYAN . "║" . WHITE . "  4. View Accounts" . str_repeat(" ", 43) . CYAN . "║\n" . RESET;
-    echo CYAN . "║" . WHITE . "  5. Run All Accounts" . str_repeat(" ", 41) . CYAN . "║\n" . RESET;
-    echo CYAN . "║" . WHITE . "  6. Exit" . str_repeat(" ", 52) . CYAN . "║\n" . RESET;
+    echo CYAN . "║" . WHITE . "  5. Exit" . str_repeat(" ", 52) . CYAN . "║\n" . RESET;
     echo CYAN . "╚═══════════════════════════════════════════════════════════════╝\n" . RESET;
     echo "\n";
     echo WHITE . "Choose an option: " . RESET;
@@ -377,17 +374,13 @@ function runAccount($account) {
 // MAIN MENU LOOP
 // ============================================
 
+// ============================================
+// MAIN MENU LOOP
+// ============================================
+
 // Check if running in CLI
 if (php_sapi_name() !== 'cli') {
     die("This script must be run from the command line!\n");
-}
-
-// Set up signal handler for Ctrl+C
-if (function_exists('pcntl_signal')) {
-    pcntl_signal(SIGINT, function() {
-        echo "\n" . YELLOW . "Interrupted by user. Exiting...\n" . RESET;
-        exit(0);
-    });
 }
 
 // Main loop with error handling
@@ -459,23 +452,7 @@ while(true) {
                 fgets(STDIN);
                 break;
                 
-            case '5': // Run All Accounts
-                $accounts = loadAccounts();
-                if (empty($accounts)) {
-                    echo YELLOW . "No accounts to run. Add some first!\n" . RESET;
-                } else {
-                    foreach ($accounts as $index => $acc) {
-                        echo "\n" . CYAN . "[" . ($index + 1) . "/" . count($accounts) . "] Running account...\n" . RESET;
-                        runAccount($acc);
-                        sleep(3); // Delay between accounts
-                    }
-                    echo "\n" . GREEN . "✓ All accounts processed!\n" . RESET;
-                }
-                echo "\n" . WHITE . "Press Enter to continue..." . RESET;
-                fgets(STDIN);
-                break;
-                
-            case '6': // Exit
+            case '5': // Exit
                 echo GREEN . "Goodbye!\n" . RESET;
                 exit(0);
                 break;

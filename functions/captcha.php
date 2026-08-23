@@ -337,3 +337,50 @@ function rs($html,$ua){
                 }
             }
         }
+
+        function antibot($html){
+            $p = explode('data:image/png;base64,',$html);
+            $count = count($p) - 2;
+            if($count < 3 || $count > 4) return null;
+            $cut = fn($s) => explode('"',$s)[0];
+            $data = [ 
+                'apikey' => anticaptcha_key,
+                'mode' => 'freeantibot',
+                'main' => $cut($p[1]),
+                'sub' => []
+            ];
+        
+            for($i = 1; $i <= $count; $i++){
+                $label = x('rel=\"','\"',$html,$i);
+                $data['sub'][$label] = $cut($p[$i+1]);
+            }
+            $r = Run(api_endpoint,["Content-Type: application/json"],json_encode($data,JSON_UNESCAPED_SLASHES));
+            
+            $r = json_decode($r['body'],true);
+        
+            if(!empty($r['jobId'])){
+                $json = json_encode(["apikey" => anticaptcha_key,"action" => "get","id" => $r['jobId']]);
+            }
+        
+            while(true){
+                $r = json_decode(Run(api_endpoint,["Content-Type: application/json"],$json)['body'],true);
+                
+                if($r['order']){
+                    $bot = " " . str_replace(" "," ",$r['order']);
+                    break;
+                }else{
+                    animation("Getting AntibotLinks");
+                    sleep(5);
+                }
+            }
+        
+            if($bot){
+        
+                #animation("Got Free AB: $bot");
+                return $bot;
+        
+            }
+        }
+        
+        
+            

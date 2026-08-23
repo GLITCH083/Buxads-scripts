@@ -7,26 +7,9 @@
  * @version v2.0
  */
 
-// ============================================
-// ERROR HANDLING
-// ============================================
-error_reporting(E_ALL);
-ini_set('display_errors', 1);
-
-// ============================================
-// COLOR DEFINITIONS
-// ============================================
-define("RED", "\033[1;31m");
-define("GREEN", "\033[1;32m");
-define("YELLOW", "\033[1;33m");
-define("BLUE", "\033[1;34m");
-define("PURPLE", "\033[1;35m");
-define("CYAN", "\033[1;36m");
-define("GREY", "\033[1;30m");
-define("WHITE", "\033[1;37m");
-define("RESET", "\033[0m");
-define("DIM", "\033[2m");
-define("BOLD", "\033[1m");
+// Suppress all errors
+error_reporting(0);
+ini_set('display_errors', 0);
 
 // ============================================
 // CONFIGURATION
@@ -35,36 +18,8 @@ define("BASE_DIR", __DIR__);
 define("SCRIPTS_DIR", BASE_DIR . "/scripts");
 
 // Load required files
-$functionFile = BASE_DIR . "/functions/function.php";
-$captchaFile = BASE_DIR . "/functions/captcha.php";
-
-if (file_exists($functionFile)) {
-    require_once $functionFile;
-} else {
-    // Define fallback functions if function.php doesn't exist
-    function saveData($key, $value) {
-        $file = BASE_DIR . "/data.json";
-        $data = [];
-        if (file_exists($file)) {
-            $data = json_decode(file_get_contents($file), true) ?: [];
-        }
-        $data[$key] = $value;
-        file_put_contents($file, json_encode($data, JSON_PRETTY_PRINT));
-        return $value;
-    }
-    
-    function get_balance() {
-        $file = BASE_DIR . "/balance.txt";
-        if (file_exists($file)) {
-            return trim(file_get_contents($file));
-        }
-        return "0";
-    }
-}
-
-if (file_exists($captchaFile)) {
-    require_once $captchaFile;
-}
+require_once BASE_DIR . "/functions/function.php";
+require_once BASE_DIR . "/functions/captcha.php";
 
 // ============================================
 // GITHUB CONFIGURATION
@@ -88,8 +43,12 @@ define("api_endpoint", "http://37.60.224.60:7860/api");
 
 date_default_timezone_set("Asia/Karachi");
 
+if (!defined("anticaptcha_key")) {
+    define("anticaptcha_key", saveData(APP_HOST, "anticaptcha-apikey"));
+}
+
 // ============================================
-// GITHUB FUNCTIONS
+// GITHUB API FUNCTIONS
 // ============================================
 function githubApiRequest($endpoint) {
     $url = GITHUB_API_URL . $endpoint;
@@ -110,29 +69,21 @@ function githubApiRequest($endpoint) {
     
     $response = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $curlError = curl_error($ch);
     curl_close($ch);
     
-    if ($curlError) {
-        echo RED . "CURL Error: " . $curlError . RESET . "\n";
-        return null;
-    }
-    
-    if ($httpCode == 200) {
+    if ($httpCode == 200 && $response) {
         return json_decode($response, true);
     }
     
-    echo RED . "HTTP Error: " . $httpCode . RESET . "\n";
     return null;
 }
 
 function githubDownloadFile($path) {
-    // Use GitHub API to get file content
+    // Try GitHub API first (works for private repos)
     $data = githubApiRequest("/contents/" . $path);
     
     if ($data && isset($data['content'])) {
-        $content = base64_decode($data['content']);
-        return $content;
+        return base64_decode($data['content']);
     }
     
     // Fallback to raw URL
@@ -155,7 +106,7 @@ function githubDownloadFile($path) {
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
     
-    if ($httpCode == 200) {
+    if ($httpCode == 200 && $response) {
         return $response;
     }
     
@@ -319,14 +270,15 @@ function applyUpdate($latest) {
         // Move file
         if (rename($file, $dest)) {
             echo "  ✓ Updated: " . $basename . "\n";
-        } else {
-            echo "  ✗ Failed to update: " . $basename . "\n";
         }
     }
     
     // Clean up temp directory
-    array_map('unlink', glob(TEMP_DIR . "/*"));
-    rmdir(TEMP_DIR);
+    $files = glob(TEMP_DIR . "/*");
+    foreach ($files as $file) {
+        if (is_file($file)) unlink($file);
+    }
+    @rmdir(TEMP_DIR);
     
     echo "\n" . GREEN . "✅ Update applied successfully!" . RESET . "\n";
     return true;
@@ -334,18 +286,6 @@ function applyUpdate($latest) {
 
 function checkForUpdates() {
     echo "\n" . CYAN . "🔍 Checking for updates..." . RESET . "\n";
-    
-    // Check if token exists
-    if (!defined('GITHUB_TOKEN') || empty(GITHUB_TOKEN)) {
-        echo RED . "❌ GitHub token not configured!\n" . RESET;
-        echo YELLOW . "Please save your token to: " . BASE_DIR . "/github_token.txt\n" . RESET;
-        echo WHITE . "Press Enter to continue..." . RESET;
-        fgets(STDIN);
-        return false;
-    }
-    
-    // Test GitHub connection
-    echo GREY . "  Connecting to GitHub..." . RESET . "\n";
     
     $current = getCurrentVersion();
     echo GREY . "  Current version: " . $current['version'] . RESET . "\n";
@@ -613,7 +553,6 @@ while (true) {
             break;
             
         case '1':
-            // Script selection loop
             while (true) {
                 displayScriptsList($scripts);
                 
@@ -639,7 +578,6 @@ while (true) {
                 
                 $selectedScript = $scripts[$scriptChoice - 1];
                 
-                // Show script details
                 echo "\n";
                 echo CYAN . "╔═══════════════════════════════════════════════════════════════╗\n" . RESET;
                 echo CYAN . "║" . WHITE . BOLD . "  📄 SCRIPT DETAILS" . str_repeat(" ", 50) . CYAN . "║\n" . RESET;

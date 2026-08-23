@@ -1,12 +1,9 @@
 {
-    "version": "1.0.0",
+    "version": "1.0.1",
     "features": [
-        "Added Scripts: AdsCoin",
-        "Added Scripts: SpaceShooter",
-        "Added Scripts: claimcrypto",
-        "Added Scripts: gamefaucet",
-        "Added Scripts: CryptoEarns",
-        "Account Management: Easy to add accounts with proxy support"
+        "Added Scripts: FreeSolana",
+        "Fixed All unnesccary Errors: No MOre Curl Error",
+        "Fix JS NOT FOUND",
     ],
-    "last_updated": "2026-08-22"
+    "last_updated": "2026-08-23"
 }

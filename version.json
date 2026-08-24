@@ -1,14 +1,7 @@
 {
-    "version": "1.0.2",
+    "version": "1.0.3",
     "features": [
-        "Added Scripts: MoonPTC",
-        "Litepick",
-        "Tronpick",
-        "SuiPick",
-        "DogePick",
-        "POlPick",
-        "Bchpick",
-        "BnbPick"
+        "Fixed All Crash Scripts"
     ],
     "last_updated": "2026-08-24"
 }

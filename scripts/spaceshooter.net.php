@@ -205,7 +205,7 @@ function headers(){
     return [
         "accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         "accept-language: en-US,en;q=0.9",
-        "user-agent: " . saveData('user-agent'),
+        "user-agent: " . saveData(APP_HOST,'user-agent'),
     ];
 }
 
@@ -213,7 +213,7 @@ function headerss(){
     return [
         "accept-language: en-US,en;q=0.9",
         "content-type: application/x-www-form-urlencoded",
-        "user-agent: " . saveData('user-agent'),
+        "user-agent: " . saveData(APP_HOST,'user-agent'),
         "accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         "origin: https://spaceshooter.net",
         "referer: https://spaceshooter.net/"
@@ -237,7 +237,7 @@ function login($email, $password = '', $proxy) {
         $ip = $ipData['query'] ?? '';
         $timezone = $ipData['timezone'] ?? '';
         $ls = 'en-US,en';
-        $userAgent = SaveData(APP_HOST, 'UserAgent');
+        $userAgent = saveData(APP_HOST,'user-agent');
         $utt = $timezone;
         $uf = md5($ip . $userAgent . $ls . $utt);
         
@@ -308,7 +308,7 @@ function faucet($email, $proxy) {
             $ip = $ipData['query'] ?? '';
             $timezone = $ipData['timezone'] ?? '';
             $ls = 'en-US,en';
-            $userAgent = SaveData(APP_HOST, 'UserAgent');
+            $userAgent = saveData(APP_HOST,'user-agent');
             $utt = $timezone;
             $uf = md5($ip . $userAgent . $ls . $utt);
             

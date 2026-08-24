@@ -214,7 +214,7 @@ function menu() {
 function headers(){
     return [
         "accept-language: en-US,en;q=0.9",
-        "user-agent: " . saveData('user-agent'),
+        "user-agent: " . saveData(APP_HOST,'user-agent'),
     ];
 }
 

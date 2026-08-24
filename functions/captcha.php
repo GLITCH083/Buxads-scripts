@@ -84,6 +84,24 @@ function solve_adslab($sitekey, $domain, $subid = "widget_user") {
     }
 }
 
+function rotation($base,$piece,$crop){
+    $data = json_encode([
+        "apikey" => anticaptcha_key,
+        "mode" => "rotation",
+        "base" => $base,
+        "piece" => $piece,
+        "crop" => $crop
+    ]);
+
+    $create = json_decode(Run(api_endpoint, ["Content-Type: application/json"], $data)['body'], true);
+
+    if (empty($create['jobId'])) {
+        return ["success" => false, "message" => "Failed to create adslab job", "response" => $create];
+    }else{
+        return poll($create['jobId']);
+    }
+}
+
 function rs_upsidedown(string $html, string $url): array {
     // 1. Fetch captcha image
     $imageBytes = (new RsCaptchaImage())->fetch($html, $url);
@@ -383,4 +401,154 @@ function rs($html,$ua){
         }
         
         
+function pcaptcha_solve($image, $question) {
+    $base64 = base64_encode($image);
             
+    $data = [
+        "apikey" => anticaptcha_key,
+        "mode" => "pcaptcha",
+        "task" => $question,
+        "image" => $base64,
+    ];
+            
+    $r = Run(api_endpoint, ["Content-Type: application/json"], json_encode($data));
+    $js = json_decode($r['body'], true);
+            
+    if (isset($js['jobId'])) {
+                return poll($js['jobId']);
+    }
+    return null;
+}
+
+
+function iconcaptcha($image){
+    $data = json_encode([
+        "apikey" => anticaptcha_key,
+        "mode" => "iconcaptcha",
+        "image" => $image
+    ]);
+
+    $r = Run(api_endpoint, ["Content-Type: application/json"], $data);
+    $js = json_decode($r['body'], true);
+            
+    if (isset($js['jobId'])) {
+        return poll($js['jobId']);
+    }
+}
+
+function generateUUID() {
+    $data = random_bytes(16);
+    $data[6] = chr(ord($data[6]) & 0x0f | 0x40);
+    $data[8] = chr(ord($data[8]) & 0x3f | 0x80);
+    return sprintf(
+        '%08s-%04s-%04s-%04s-%12s',
+        bin2hex(substr($data, 0, 4)),
+        bin2hex(substr($data, 4, 2)),
+        bin2hex(substr($data, 6, 2)),
+        bin2hex(substr($data, 8, 2)),
+        bin2hex(substr($data, 10, 6))
+    );
+}
+
+function generateRandomUID($bytes = 4) {
+    return strtoupper(bin2hex(random_bytes($bytes)));
+}
+
+function generateWebKitBoundary() {
+    return 'WebKitFormBoundary' . generateRandomUID(8);
+}
+
+function solveIconCaptcha($icon_token, $host, $url, $captcha_url, $email, $proxy = null) {
+    $webkit_boundary = generateWebKitBoundary();
+    $init_time = round(microtime(true) * 1000) - rand(54, 97);
+    $timestamp = round(microtime(true) * 1000);
+    $widget_id = generateUUID();
+    
+    $load_payload = [
+        "widgetId" => $widget_id,
+        "action" => "LOAD",
+        "theme" => "light",
+        "token" => $icon_token,
+        "timestamp" => $timestamp,
+        "initTimestamp" => $init_time
+    ];
+    
+    $encoded_payload = base64_encode(json_encode($load_payload));
+    
+    $headers = [
+        "host: $host",
+        "x-iconcaptcha-token: $icon_token",
+        "x-requested-with: XMLHttpRequest",
+        "user-agent: " . saveData(APP_HOST,'user-agent'),
+        "content-type: multipart/form-data; boundary=----$webkit_boundary",
+        "accept: */*",
+        "origin: https://$host",
+        "referer: $url",
+    ];
+
+    
+    $request_body = "------$webkit_boundary\r\n" .
+                   "Content-Disposition: form-data; name=\"payload\"\r\n\r\n" .
+                   "$encoded_payload\r\n" .
+                   "------$webkit_boundary--";
+    
+    $response = Run($captcha_url, $headers, $request_body, "data", $proxy, 2, $email)['body'];
+
+    
+    $response_data = json_decode(base64_decode($response), true);
+    
+    if (!isset($response_data['identifier'])) {
+        return null;
+    }
+    
+    $challenge_id = $response_data['identifier'];
+    $challenge = $response_data['challenge'];
+    
+    $solve = iconcaptcha($challenge);
+
+    
+    if (!$solve || !isset($solve['x']) || !isset($solve['y'])) {
+        return null;
+    }
+    
+    $x_positions = [$solve['x']];
+    
+    foreach ($x_positions as $x_position) {
+        $init_time = round(microtime(true) * 1000) - rand(54, 97);
+        $timestamp = round(microtime(true) * 1000);
+        
+        $selection_payload = [
+            "widgetId" => $widget_id,
+            "challengeId" => $challenge_id,
+            "action" => "SELECTION",
+            "x" => $x_position,
+            "y" => $solve['y'],
+            "width" => 320,
+            "token" => $icon_token,
+            "timestamp" => $timestamp,
+            "initTimestamp" => $init_time
+        ];
+        
+        $encoded_selection = base64_encode(json_encode($selection_payload));
+        
+        $selection_body = "------$webkit_boundary\r\n" .
+                         "Content-Disposition: form-data; name=\"payload\"\r\n\r\n" .
+                         "$encoded_selection\r\n" .
+                         "------$webkit_boundary--";
+        
+        $selection_response = Run($captcha_url, $headers, $selection_body, "data", $proxy, 2, $email)['body'];
+        $selection_data = json_decode(base64_decode($selection_response), true);
+        
+        if (isset($selection_data['completed']) && $selection_data['completed']) {
+            return [
+                "captcha" => "icaptcha",
+                "_iconcaptcha-token" => $icon_token,
+                "ic-rq" => 1,
+                "ic-wid" => $widget_id,
+                "ic-cid" => $selection_data['identifier'],
+                "ic-hp" => ""
+            ];
+        }
+    }
+    return null;
+}

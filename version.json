@@ -1,9 +1,14 @@
 {
-    "version": "1.0.1",
+    "version": "1.0.2",
     "features": [
-        "Added Scripts: FreeSolana",
-        "Fixed All unnesccary Errors: No MOre Curl Error",
-        "Fix JS NOT FOUND"
+        "Added Scripts: MoonPTC",
+        "Litepick",
+        "Tronpick",
+        "SuiPick",
+        "DogePick",
+        "POlPick",
+        "Bchpick",
+        "BnbPick"
     ],
-    "last_updated": "2026-08-23"
+    "last_updated": "2026-08-24"
 }

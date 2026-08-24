@@ -206,7 +206,7 @@ function headers(){
     return [
         "accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         "accept-language: en-US,en;q=0.9",
-        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+        "user-agent: " . saveData('user-agent'),
     ];
 }
 
@@ -214,7 +214,7 @@ function headerss(){
     return [
         "accept-language: en-US,en;q=0.9",
         "content-type: application/x-www-form-urlencoded",
-        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+        "user-agent: " . saveData('user-agent'),
         "accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         "origin: https://gamefaucet.fun",
         "referer: https://gamefaucet.fun/"
@@ -222,7 +222,7 @@ function headerss(){
 }
 
 function login($email, $password = '', $proxy) {
-    $r = Run("https://gamefaucet.fun",headers(),null,null,$proxy,0,$email);
+    $r = Run("https://gamefaucet.fun/",headers(),null,null,$proxy,0,$email);
       
     if ($r['info']['redirect_url'] == "https://gamefaucet.fun/dashboard") {
         return true;
@@ -267,7 +267,7 @@ function faucet($email, $proxy) {
   
     
     while (true) {
-       
+        
         $r = Run("https://gamefaucet.fun/faucet/doge",headers(),null,null,$proxy,0,$email);
 
         if ($r['info']['redirect_url']) {
@@ -335,7 +335,7 @@ function faucet($email, $proxy) {
             if ($msg) {
                 $claimCount++;
                 $GLOBALS['faucet_claims']++;
-                echo WHITE . '[ ' . GREEN . $GLOBALS['faucet_claims'] . WHITE . " / " . YELLOW . $GLOBALS['faucet_totalclaims'] . WHITE . ' ] ' . GREEN . $msg . RESET . "\n";
+                echo WHITE . '[ ' . GREEN . $GLOBALS['faucet_claims'] . WHITE . " / " . YELLOW . $GLOBALS['faucet_totalclaims'] . WHITE . ' ] ' . GREEN . $msg . WHITE . " | " . YELLOW . get_balance() . RESET .  "\n";
                 sleep(5);
             }
         }

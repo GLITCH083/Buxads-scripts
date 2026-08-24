@@ -205,7 +205,7 @@ function headers(){
     return [
         "accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         "accept-language: en-US,en;q=0.9",
-        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+        "user-agent: " . saveData('user-agent'),
     ];
 }
 
@@ -213,7 +213,7 @@ function headerss(){
     return [
         "accept-language: en-US,en;q=0.9",
         "content-type: application/x-www-form-urlencoded",
-        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+        "user-agent: " . saveData('user-agent'),
         "accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         "origin: https://spaceshooter.net",
         "referer: https://spaceshooter.net/"
@@ -266,7 +266,7 @@ function faucet($email, $proxy) {
   
     
     while (true) {
-       
+        shortlink($email, $proxy);
         $r = Run("https://spaceshooter.net/faucet/doge",headers(),null,null,$proxy,0,$email);
 
         if ($r['info']['redirect_url']) {
@@ -334,7 +334,7 @@ function faucet($email, $proxy) {
             if ($msg) {
                 $claimCount++;
                 $GLOBALS['faucet_claims']++;
-                echo WHITE . '[ ' . GREEN . $GLOBALS['faucet_claims'] . WHITE . " / " . YELLOW . $GLOBALS['faucet_totalclaims'] . WHITE . ' ] ' . GREEN . $msg . RESET . "\n";
+                echo WHITE . '[ ' . GREEN . $GLOBALS['faucet_claims'] . WHITE . " / " . YELLOW . $GLOBALS['faucet_totalclaims'] . WHITE . ' ] ' . GREEN . $msg . WHITE . " | " . YELLOW . get_balance() . RESET .  "\n";
                 sleep(5);
             }
         }
@@ -391,7 +391,7 @@ function shortlink($email, $proxy) {
                 "h-captcha-response" => $cap
             ]);
             $r = Run($url,headerss(),$payload,null,$proxy,0,$email);
-
+            print_r($r);
             $redirect = $r['info']['redirect_url'];
             $bypass = Bypass($redirect);
             if ($bypass['original_url']) {

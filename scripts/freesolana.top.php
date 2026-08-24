@@ -206,7 +206,7 @@ function headers(){
     return [
         "accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         "accept-language: en-US,en;q=0.9",
-        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
+        "user-agent: " . saveData('user-agent'),
     ];
 }
 
@@ -214,7 +214,7 @@ function headerss(){
     return [
         "accept-language: en-US,en;q=0.9",
         "content-type: application/x-www-form-urlencoded",
-        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
+        "user-agent: " . saveData('user-agent'),
         "accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         "origin: https://freesolana.top",
         "referer: https://freesolana.top/"

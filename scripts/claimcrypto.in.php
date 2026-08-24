@@ -227,18 +227,23 @@ function login($email,$password = "", $proxy){
     $r = Run("https://claimcrypto.in",headers(),null,null,$proxy,0,$email);
     
 
-    if(!str_contains($r['body'],'https://claimcrypto.in/auth/login')){
+   
+    if(str_contains($r['info']['redirect_url'],'dashboard')){
         return  true;
     }
     
     if ($r['info']['http_code'] == 200) {
         $csrf = explode('"', explode('<input type="hidden" name="csrf_token_name" id="token" value="', $r['body'])[1])[0];
-        $payload = http_build_query(["wallet" => $email,"csrf_token_name" => $csrf]);
+        $device_token = generateDeviceToken();
+        $payload = http_build_query(["wallet" => $email,"csrf_token_name" => $csrf,"device_token" => $device_token]);
         
         $r = Run("https://claimcrypto.in/auth/login",headerss(),$payload,null,$proxy,0,$email);
      
-        if ($r['info']['redirect_url'] == "https://claimcrypto.in/") {
-            return true;
+        $r = Run("https://claimcrypto.in",headers(),null,null,$proxy,0,$email);
+    
+
+        if(str_contains($r['info']['redirect_url'],'dashboard')){
+            return  true;
         }
     }
     return false;
@@ -284,6 +289,17 @@ function faucet($email, $proxy){
         }
     }
 }
+
+function generateDeviceToken() {
+    // Use random_bytes for cryptographically secure randomness
+    $random = substr(bin2hex(random_bytes(7)), 0, 13);
+    
+    // Timestamp in base36 (matches JavaScript's Date.now().toString(36))
+    $timestamp = base_convert(round(microtime(true) * 1000), 10, 36);
+    
+    return 'dev_' . $random . $timestamp;
+}
+
 
 
 function runAccount($account) {

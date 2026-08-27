@@ -238,7 +238,7 @@ function login($email, $password = '', $proxy) {
         $ip = $ipData['query'] ?? '';
         $timezone = $ipData['timezone'] ?? '';
         $ls = 'en-US,en';
-        $userAgent = saveData(APP_HOST,'user-agent');
+        $userAgent = SaveData(APP_HOST, 'UserAgent');
         $utt = $timezone;
         $uf = md5($ip . $userAgent . $ls . $utt);
         
@@ -267,7 +267,7 @@ function faucet($email, $proxy) {
   
     
     while (true) {
-        shortlink($email, $proxy);
+        
         $r = Run("https://cryptoearns.com/faucet/doge",headers(),null,null,$proxy,0,$email);
 
         if ($r['info']['redirect_url']) {
@@ -309,7 +309,7 @@ function faucet($email, $proxy) {
             $ip = $ipData['query'] ?? '';
             $timezone = $ipData['timezone'] ?? '';
             $ls = 'en-US,en';
-            $userAgent = saveData(APP_HOST,'user-agent');
+            $userAgent = SaveData(APP_HOST, 'UserAgent');
             $utt = $timezone;
             $uf = md5($ip . $userAgent . $ls . $utt);
             

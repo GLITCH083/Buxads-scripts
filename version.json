@@ -1,7 +1,8 @@
 {
-    "version": "1.0.3",
+    "version": "1.0.5",
     "features": [
-        "Fixed All Crash Scripts"
+        "Added Scripts: Coinfree_bot",
+        "Fix: All Scripts That giving Problem"
     ],
-    "last_updated": "2026-08-24"
+    "last_updated": "2026-08-27"
 }

@@ -1,8 +1,7 @@
 {
     "version": "1.0.5",
     "features": [
-        "Added Scripts: Coinfree_bot",
-        "Fix: All Scripts That giving Problem"
+        "Fix: CoinFree Spin Failed"
     ],
     "last_updated": "2026-08-27"
 }

@@ -317,10 +317,7 @@ function runFaucet($account) {
             $cooldown = $details['data']["faucet_cooldown_remaining_$mode"] ?? 0;
             $cooldowns[$mode] = $cooldown;
 
-            if ($cooldown > 0) {
-                animation("⏳ $mode cooldown: {$cooldown}s, skipping.");
-                continue;
-            }
+            if (empty($cooldown)){
 
             $emoji = $modeEmoji[$mode] ?? '🎮';
             animation("🎯 Playing: $mode $emoji");
@@ -356,8 +353,8 @@ function runFaucet($account) {
                 // Display with 0 claim increment
                 echo WHITE . '[ ' . GREEN . $GLOBALS['faucet_claims'] . WHITE . " / " . YELLOW . $GLOBALS['faucet_totalclaims'] . WHITE . ' ] ' . RED . "Failed" . WHITE . " | " . YELLOW . $balance . " $coin" . RESET . "\n";
             }
-
-            sleep(2); // small delay between games
+        }
+            sleep(55); // small delay between games
         }
 
         // Determine minimum cooldown

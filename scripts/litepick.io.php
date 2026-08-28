@@ -374,8 +374,10 @@ function faucet($email, $proxy = null) {
     
         if ($r['info']['http_code'] == 200) {
        
+            $r =  Run($url,headers(),null,null,$proxy,2,$email);
             $csrf = explode(';', explode('csrf_cookie_name=', $r['header']['set-cookie'])[1])[0];
-        
+            if(empty($csrf)){continue;}
+                    
             $timer = 0;
             if (preg_match('/show_countdown_clock\((\d+)\)/', $r['body'], $timerMatch)) {
                 $timer = intval($timerMatch[1]);

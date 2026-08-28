@@ -369,13 +369,15 @@ function faucet($email, $proxy = null) {
         
         if ($r['info']['http_code'] == 302) {
             echo RED . "You're Cookie Has Been Expired Please Re-Login Again Thanks.\n";
+
             return false;
         }
     
         if ($r['info']['http_code'] == 200) {
-       
+            $r =  Run($url,headers(),null,null,$proxy,2,$email);
             $csrf = explode(';', explode('csrf_cookie_name=', $r['header']['set-cookie'])[1])[0];
-        
+            if(empty($csrf)){continue;}
+            
             $timer = 0;
             if (preg_match('/show_countdown_clock\((\d+)\)/', $r['body'], $timerMatch)) {
                 $timer = intval($timerMatch[1]);
@@ -394,7 +396,7 @@ function faucet($email, $proxy = null) {
             }
         
             $data = payload($r['body'], $email, $host, $url, $ua, null, $proxy, true, false, $csrf, $key, "https://{$host}/iconcaptcha.php");
-            if (!$data) return ['success' => false, 'timer' => 0];
+            if (!$data) continue;
         
             $payload = http_build_query($data['payload']);
             $GLOBALS['faucet_totalclaims']++;

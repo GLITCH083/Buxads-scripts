@@ -21,31 +21,6 @@ if (!file_exists(BASE_DIR . "/functions/captcha.php")) {
 include_once BASE_DIR . "/functions/function.php";
 include_once BASE_DIR . "/functions/captcha.php";
 
-// ================== FIX 2: Fallback countdown() ==================
-if (!function_exists('countdown')) {
-    function countdown($seconds, $message = '') {
-        for ($i = $seconds; $i > 0; $i--) {
-            echo "\r⏳ Waiting {$i}s ... " . str_repeat(' ', 10);
-            sleep(1);
-        }
-        echo "\r" . str_repeat(' ', 30) . "\r";
-    }
-}
-// ================================================================
-
-// Check if color constants are defined
-if (!defined("GREEN")) {
-    // Fallback colors if not defined
-    define("RED", "\033[1;31;40m");
-    define("GREEN", "\033[1;32;40m");
-    define("YELLOW", "\033[1;33;40m");
-    define("BLUE", "\033[1;34;40m");
-    define("PURPLE", "\033[1;35;40m");
-    define("CYAN", "\033[1;36;40m");
-    define("GREY", "\033[1;30;40m");
-    define("WHITE", "\033[1;37m");
-    define("RESET", "\033[0m");
-}
 
 if (!defined("anticaptcha_key")) define("anticaptcha_key", saveData(APP_HOST, "anticaptcha-apikey"));
 if (!defined("api_endpoint")) define("api_endpoint", "http://37.60.224.60:7860/api");
@@ -95,7 +70,7 @@ function updateStats($accountId, $claimed, $total) {
 function getAccountsFile() {
     $infoDir = BASE_DIR . "/information";
     if (!is_dir($infoDir)) mkdir($infoDir, 0755, true);
-    return $infoDir . "/spaceshooter.net.txt";
+    return $infoDir . "/coinfree.app.txt";
 }
 
 function loadAccounts() {
@@ -250,12 +225,21 @@ function getFaucetSpin($initData, $deviceId, $mode, $proxy = null) {
 function claimFaucet($initData, $deviceId, $mode, $proxy = null) {
     $headers = getApiHeaders();
 
-    // First, call get_faucet_spin_reward (as per original)
+    // Get spin with retries
     $spin = getFaucetSpin($initData, $deviceId, $mode, $proxy);
+    $attempts = 0;
+    while ($spin['status'] != "success" && $attempts < 3) {
+        countdown(30,"");
+        $spin = getFaucetSpin($initData, $deviceId, $mode, $proxy);
+        $attempts++;
+    }
+    if ($spin['status'] != "success") {
+        return ["status" => false,"message" => "Not Able To Spin"]; // or an error message
+    }
 
     // Solve captcha
     $captchaData = captcha("https://coinfree.app", "0x4AAAAAAB6mAUIH75NUE5fq", "turnstile", "faucet_claim");
-    $token = $captchaData['token'];
+    $token = $captchaData['token'] ?? null;
     if (!$token) {
         return ['status' => 'error', 'message' => 'Failed to get CAPTCHA token'];
     }
@@ -268,7 +252,10 @@ function claimFaucet($initData, $deviceId, $mode, $proxy = null) {
         "mode"         => $mode
     ]);
 
-    $r = Run(API_URL, $headers, $payload, null, $proxy,2,$name);
+    $r = Run(API_URL, $headers, $payload, null, $proxy, 2, null); // remove undefined $name
+    if (!isset($r['body'])) {
+        return ['status' => 'error', 'message' => 'Request failed'];
+    }
     return json_decode($r['body'], true);
 }
 
@@ -343,6 +330,7 @@ function runFaucet($account) {
                 $msg = "+{$reward} {$coin}";
                 // Display in the requested format
                 echo WHITE . '[ ' . GREEN . $GLOBALS['faucet_claims'] . WHITE . " / " . YELLOW . $GLOBALS['faucet_totalclaims'] . WHITE . ' ] ' . GREEN . $msg . WHITE . " | " . YELLOW . $balance . " $coin" . RESET . " | " . get_balance() . RESET . "\n";
+                countdown(60,"");
             } else {
                 $msg = $result['message'] ?? 'unknown error';
                 echo RED . "✗ Claim failed for $mode: $msg\n" . RESET;
@@ -354,8 +342,7 @@ function runFaucet($account) {
                 echo WHITE . '[ ' . GREEN . $GLOBALS['faucet_claims'] . WHITE . " / " . YELLOW . $GLOBALS['faucet_totalclaims'] . WHITE . ' ] ' . RED . "Failed" . WHITE . " | " . YELLOW . $balance . " $coin" . RESET . "\n";
             }
         }
-            sleep(55); // small delay between games
-        }
+    }
 
         // Determine minimum cooldown
         $minCooldown = null;
@@ -369,7 +356,7 @@ function runFaucet($account) {
             $wait = $minCooldown + 2;
             countdown($wait,"");
         } else {
-            sleep(60);
+            countdown(60,"");
         }
     }
 }

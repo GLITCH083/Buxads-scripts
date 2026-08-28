@@ -1,7 +1,9 @@
 {
-    "version": "1.0.6",
+    "version": "1.0.7",
     "features": [
-        "Fix: CoinFree Spin Failed"
+        "Added: limefaucet.com",
+        "Fix: CoinFree Spin Failed. Now retries OF spin upto 3 times",
+        "Fix: Pick 1 Claim Only"
     ],
-    "last_updated": "2026-08-27"
+    "last_updated": "2026-08-28"
 }

@@ -235,43 +235,122 @@ function login($email,$password = null,$proxy = null){
     return false;
 }
 
-function faucet($email,$proxy){
-    while(true){
-        $r = Run("https://limefaucet.com/api/faucet/info",headers(),null,null,$proxy,2,$email);
-        $js = json_decode($r['body'],true);
-        if($js['time_remaining_seconds'] > 0){
-            countdown($js['time_remaining_seconds'],"⏳ Waiting ");
+
+
+function target_at($data, $t_ms) {
+    $period = max(1, (int)$data['period_ms']);
+    $path = $data['path'];
+    $n = (($t_ms % $period) + $period) % $period;
+    $r = $path[0];
+    $a = array_merge($path[0], ['at' => $period]);
+    for ($i = count($path) - 1; $i >= 0; $i--) {
+        if ($n >= $path[$i]['at']) {
+            $r = $path[$i];
+            $a = ($i + 1 < count($path))
+                ? $path[$i + 1]
+                : array_merge($path[0], ['at' => $period]);
+            break;
+        }
+    }
+    $span = max(1, $a['at'] - $r['at']);
+    $s = max(0, min(1, ($n - $r['at']) / $span));
+    return [
+        'x' => $r['x'] + ($a['x'] - $r['x']) * $s,
+        'y' => $r['y'] + ($a['y'] - $r['y']) * $s,
+    ];
+}
+
+function solve_dot_captcha($challenge_json) {
+    $data = json_decode($challenge_json, true);
+    if (empty($data['session_id']) || empty($data['path'])) {
+        throw new Exception('bad challenge');
+    }
+
+    $period = (int)$data['period_ms'];
+    $hold   = (int)$data['hold_duration_ms'];
+    $start  = $data['dot_start'];
+    $samples = [];
+    $t0 = microtime(true);
+
+    // catch target ~0.3s
+    for ($i = 1; $i <= 8; $i++) {
+        $t_ms = (int)((microtime(true) - $t0) * 1000);
+        $f = $i / 8.0;
+        $pos = target_at($data, max(0, $t_ms));
+        $samples[] = [
+            'x' => $start['x'] + ($pos['x'] - $start['x']) * $f,
+            'y' => $start['y'] + ($pos['y'] - $start['y']) * $f,
+            't' => max(0, $t_ms),
+            'down' => true,
+        ];
+        usleep(35000);
+    }
+
+    // KEY: realtime track for period + hold
+    $end_ms = $period + $hold + 150;
+    while (true) {
+        $t_ms = (int)((microtime(true) - $t0) * 1000);
+        if ($t_ms > $end_ms) break;
+        $pos = target_at($data, $t_ms);
+        $jx = (mt_rand(-8, 8) / 10000.0);
+        $jy = (mt_rand(-8, 8) / 10000.0);
+        if ($samples && $t_ms <= $samples[count($samples)-1]['t']) {
+            $t_ms = $samples[count($samples)-1]['t'] + 1;
+        }
+        $samples[] = [
+            'x' => max(0.02, min(0.98, $pos['x'] + $jx)),
+            'y' => max(0.02, min(0.98, $pos['y'] + $jy)),
+            't' => $t_ms,
+            'down' => true,
+        ];
+        usleep(40000);
+    }
+
+    return json_encode([
+        'session_id' => $data['session_id'],
+        'action'     => 'faucet',
+        'arena'      => ['width' => 420, 'height' => 260],
+        'samples'    => $samples,
+    ]);
+}
+
+
+
+function faucet($email, $proxy) {
+    while (true) {
+        // 1. Check if claim is available
+        $r = Run("https://limefaucet.com/api/faucet/info", headers(), null, null, $proxy, 2, $email);
+        $js = json_decode($r['body'], true);
+        if ($js['time_remaining_seconds'] > 0) {
+            countdown($js['time_remaining_seconds'], "⏳ Waiting ");
             continue;
         }
 
-        $payload = json_encode(["purpose" => "faucet"]);
-        $r =  Run("https://limefaucet.com/api/captcha-rotation/challenge",headerss(),$payload,null,$proxy,2,$email);
-        $js = json_decode($r['body'],true);
-        if($js['session_id']){
-            $session_id = $js['session_id'];
-            $vid = $js['variant_id'];
+        // 2. Get new dot‑captcha challenge
+        $payload = json_encode(["action" => "faucet"]);
+        $r = Run("https://limefaucet.com/api/captcha-v2/challenge", headerss(), $payload, null, $proxy, 2, $email);
+        $challenge = $r['body'];  // the JSON from the challenge
 
-            $base_image = base64_encode(Run("https://limefaucet.com/v2captcha-lime.jpg",headers(),null,null,$proxy,2,$email)['body']);
-            $piece_image = base64_encode(Run("https://limefaucet.com/captcha-variants/v2_" . $vid . ".webp",headers(),null,null,$proxy,2,$email)['body']);
-            $crop = "{$js['crop']['x']},{$js['crop']['y']},{$js['crop']['radius']}"; 
-            $rotation = rotation($base_image,$piece_image,$crop);
-            $rot = $rotation['angle'];
-            if($rot){
-                $payload = json_encode(["session_id" => $session_id,"purpose" => "faucet","value" => $rot]);
-                $r =  Run("https://limefaucet.com/api/captcha-rotation/verify",headerss(),$payload,null,$proxy,2,$email);
-                $js = json_decode($r['body'],true);
-                
-                if($js['ok']){
-                    $verifyToken = $js['token'];
-                }
-            }
+        // 3. Generate the samples and build verify payload
+        $verify_payload = solve_dot_captcha($challenge);
+
+        // 4. Submit verification
+        $r = Run("https://limefaucet.com/api/captcha-v2/verify", headerss(), $verify_payload, null, $proxy, 2, $email);
+
+        $js = json_decode($r['body'], true);
+        if (isset($js['ok']) && $js['ok'] === true) {
+            $verifyToken = $js['token'];
+        } else {
+            // Verification failed – try again from the top
+            continue;
         }
-        $payload = json_encode(["captcha_token" => $verifyToken]);
-        $r =  Run("https://limefaucet.com/api/faucet/claim",headerss(),$payload,null,$proxy,2,$email);
 
-        $js = json_decode($r['body'],true);
+        // 5. Claim faucet with the token
+        $claim_payload = json_encode(["captcha_token" => $verifyToken]);
+        $r = Run("https://limefaucet.com/api/faucet/claim", headerss(), $claim_payload, null, $proxy, 2, $email);
+        $js = json_decode($r['body'], true);
         $GLOBALS['faucet_totalclaims']++;
-        if($js['reward_crypto']){
+        if ($js['reward_crypto']) {
             $GLOBALS['faucet_claims']++;
             echo WHITE . '[ ' . GREEN . $GLOBALS['faucet_claims'] . WHITE . " / " . YELLOW . $GLOBALS['faucet_totalclaims'] . WHITE . ' ] ' . GREEN . "+" . number_format((float)$js['reward_crypto'], 6, ".", "") . " " . $js['currency'] . WHITE . ' | ' . YELLOW . get_balance() . RESET . "\n";
         }

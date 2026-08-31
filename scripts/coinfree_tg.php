@@ -367,7 +367,7 @@ function menu() {
     clear();
     echo "\n";
     echo CYAN . "╔═══════════════════════════════════════════════════════════════╗\n" . RESET;
-    echo CYAN . "║" . WHITE . "  🚀  spaceshooter.net AUTO BOT" . str_repeat(" ", 30) . CYAN . "║\n" . RESET;
+    echo CYAN . "║" . WHITE . "  🚀  CoinFree (TG BOT) AUTO BOT" . str_repeat(" ", 30) . CYAN . "║\n" . RESET;
     echo CYAN . "╠═══════════════════════════════════════════════════════════════╣\n" . RESET;
     echo CYAN . "║" . WHITE . "  1. Run Account (infinite loop)" . str_repeat(" ", 33) . CYAN . "║\n" . RESET;
     echo CYAN . "║" . WHITE . "  2. Add Account" . str_repeat(" ", 45) . CYAN . "║\n" . RESET;

@@ -316,7 +316,7 @@ function autoWatch($email,$proxy){
 
     $csrf = explode("';",explode("let csrfHash = '", $r['body'])[1])[0];
     $action = explode("',",explode("url: '",$r['body'])[1])[0];
-    echo $action . NEWLINE;
+    if(!$action) return null;
 
     while(true){
         countdown(60,"⏳ Waiting ");
@@ -365,7 +365,7 @@ function runAccount($account) {
         while(true){
         autoWatch($email,$proxy);
         ptc($email, $proxy);
-        countdown(60,"⏳ Waiting ");
+        countdown(60,"Retrying In ");
         }
     } else {
         echo RED . "✗ Login Failed for: " . $email . "\n" . RESET;

@@ -1,10 +1,9 @@
 {
     "version": "1.0.8",
     "features": [
-        "Added: faucetcrypto",
-        "Added: ClaimPepe",
-        "Added: Makeyoutask",
-        "Fix: LimeFaucet Captcha change"
+        "Added: EarnSolana",
+        "Fix: MakeYouTask",
+        "Fix: MoonPtc Captcha change"
     ],
-    "last_updated": "2026-08-31"
+    "last_updated": "2026-9-02"
 }

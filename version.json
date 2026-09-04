@@ -1,10 +1,7 @@
 {
-    "version": "1.1.0",
+    "version": "1.1.1",
     "features": [
-        "Added: Category's",
-        "Fix: EarnSolana Antibot Added",
-        "Fix: MakeYouTask Short & Earn Section",
-        "Fix: MoonPtc & LimeFaucet Captcha change"
+        "Fix: Auto Crash Limefaucet & MoonPTC"
     ],
     "last_updated": "2026-9-02"
 }

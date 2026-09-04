@@ -1,10 +1,10 @@
 #!/usr/bin/env php
 <?php
 /**
- * 🤖 Bot Launcher - Script Manager
+ * 🤖 Bot Launcher - Script Manager with subfolder sync & cleanup
  * 
  * @author GLITCH083
- * @version v2.0
+ * @version v2.1
  */
 
 // Suppress all errors
@@ -38,6 +38,7 @@ define("GITHUB_BRANCH", "main");
 define("GITHUB_API_URL", "https://api.github.com/repos/" . GITHUB_USERNAME . "/" . GITHUB_REPO);
 define("VERSION_FILE", "version.json");
 define("TEMP_DIR", BASE_DIR . "/temp_update");
+define("MANIFEST_FILE", BASE_DIR . "/synced_manifest.json");
 define("APP_HOST", "buxads-Bot");
 define("api_endpoint", "http://37.60.224.60:7860/api");
 
@@ -113,21 +114,39 @@ function githubDownloadFile($path) {
     return false;
 }
 
-function githubListDirectory($path) {
+/**
+ * Recursively get all PHP files from a given path in the repo
+ */
+function githubGetAllFiles($path = 'scripts') {
     $data = githubApiRequest("/contents/" . $path);
+    if (!$data || !is_array($data)) return [];
     
-    if ($data && is_array($data)) {
-        $files = [];
-        foreach ($data as $item) {
-            if (isset($item['type']) && $item['type'] === 'file' && 
-                isset($item['name']) && pathinfo($item['name'], PATHINFO_EXTENSION) === 'php') {
-                $files[] = $item['name'];
-            }
+    $files = [];
+    foreach ($data as $item) {
+        if ($item['type'] === 'file' && pathinfo($item['name'], PATHINFO_EXTENSION) === 'php') {
+            $files[] = $item['path']; // e.g., "scripts/apikey/foo.php"
+        } elseif ($item['type'] === 'dir') {
+            $subFiles = githubGetAllFiles($item['path']);
+            $files = array_merge($files, $subFiles);
         }
-        return $files;
     }
-    
+    return $files;
+}
+
+// ============================================
+// MANIFEST FUNCTIONS
+// ============================================
+function getSyncedManifest() {
+    if (file_exists(MANIFEST_FILE)) {
+        $content = file_get_contents(MANIFEST_FILE);
+        $data = json_decode($content, true);
+        if (is_array($data)) return $data;
+    }
     return [];
+}
+
+function saveSyncedManifest($files) {
+    file_put_contents(MANIFEST_FILE, json_encode($files, JSON_PRETTY_PRINT));
 }
 
 // ============================================
@@ -169,8 +188,38 @@ function isNewerVersion($current, $latest) {
     return version_compare($latest['version'], $current['version'], '>');
 }
 
+$updateStatus = null;
+
+function checkUpdateStatus() {
+    global $updateStatus;
+    if ($updateStatus !== null) {
+        return $updateStatus;
+    }
+    
+    $current = getCurrentVersion();
+    $latest = fetchLatestVersion();
+    $available = false;
+    $version = null;
+    $features = [];
+    
+    if ($latest && isNewerVersion($current, $latest)) {
+        $available = true;
+        $version = $latest['version'];
+        $features = isset($latest['features']) ? $latest['features'] : [];
+    }
+    
+    $updateStatus = [
+        'available' => $available,
+        'latest_version' => $version,
+        'features' => $features,
+        'current_version' => $current['version']
+    ];
+    
+    return $updateStatus;
+}
+
 // ============================================
-// UPDATE FUNCTIONS
+// UPDATE FUNCTIONS (with subfolder support & cleanup)
 // ============================================
 function displayUpdateInfo($current, $latest) {
     echo "\n";
@@ -194,34 +243,33 @@ function displayUpdateInfo($current, $latest) {
 }
 
 function applyUpdate($latest) {
-    echo "\n" . YELLOW . "📥 Downloading update..." . RESET . "\n";
+    echo "\n" . YELLOW . "📥 Fetching remote file list..." . RESET . "\n";
     
+    // 1. Get list of all remote PHP files under scripts/ (recursive)
+    $remoteFiles = githubGetAllFiles('scripts');
+    if (empty($remoteFiles)) {
+        echo RED . "✗ Could not fetch remote file list. Update aborted.\n" . RESET;
+        return false;
+    }
+    echo GREEN . "✓ Found " . count($remoteFiles) . " remote scripts.\n" . RESET;
+    
+    // 2. Create temp directory
     if (!is_dir(TEMP_DIR)) {
         mkdir(TEMP_DIR, 0777, true);
     }
     
-    $filesToDownload = [
-        'bot.php',
-        'functions/function.php',
-        'functions/captcha.php',
-        'version.json'
-    ];
-    
-    // Get scripts list
-    $scripts = githubListDirectory('scripts');
-    foreach ($scripts as $script) {
-        $filesToDownload[] = 'scripts/' . $script;
-    }
-    
+    // 3. Download each remote file
+    echo "\n" . YELLOW . "📥 Downloading updates..." . RESET . "\n";
     $downloaded = 0;
-    $total = count($filesToDownload);
+    $total = count($remoteFiles);
     
-    foreach ($filesToDownload as $file) {
-        echo "  Downloading: " . $file . " ... ";
+    foreach ($remoteFiles as $remotePath) {
+        // e.g., "scripts/apikey/foo.php"
+        echo "  Downloading: " . $remotePath . " ... ";
         
-        $content = githubDownloadFile($file);
+        $content = githubDownloadFile($remotePath);
         if ($content !== false) {
-            $tempFile = TEMP_DIR . "/" . basename($file);
+            $tempFile = TEMP_DIR . "/" . str_replace('/', '_', $remotePath); // flatten for temp
             file_put_contents($tempFile, $content);
             $downloaded++;
             echo GREEN . "✓" . RESET . "\n";
@@ -233,54 +281,84 @@ function applyUpdate($latest) {
     echo "\n" . GREEN . "✓ Downloaded " . $downloaded . "/" . $total . " files" . RESET . "\n";
     
     if ($downloaded == 0) {
-        echo RED . "✗ No files downloaded. Update failed." . RESET . "\n";
+        echo RED . "✗ No files downloaded. Update failed.\n" . RESET;
         return false;
     }
     
-    echo "\n" . YELLOW . "🔄 Applying update..." . RESET . "\n";
-    
-    // Backup current bot.php
-    if (file_exists(BASE_DIR . "/bot.php")) {
-        copy(BASE_DIR . "/bot.php", BASE_DIR . "/bot.php.bak");
-        echo "  ✓ Created backup: bot.php.bak\n";
-    }
-    
-    // Move files to correct locations
-    $files = glob(TEMP_DIR . "/*");
-    foreach ($files as $file) {
-        if (is_dir($file)) continue;
+    // 4. Move files to their correct locations (relative to BASE_DIR)
+    echo "\n" . YELLOW . "🔄 Installing files..." . RESET . "\n";
+    $installed = [];
+    foreach ($remoteFiles as $remotePath) {
+        $tempFile = TEMP_DIR . "/" . str_replace('/', '_', $remotePath);
+        if (!file_exists($tempFile)) continue;
         
-        $basename = basename($file);
-        
-        // Determine destination
-        if ($basename == 'function.php' || $basename == 'captcha.php') {
-            $dest = BASE_DIR . "/functions/" . $basename;
-        } elseif ($basename == 'version.json' || $basename == 'bot.php') {
-            $dest = BASE_DIR . "/" . $basename;
+        $targetFile = BASE_DIR . "/" . $remotePath;
+        $targetDir = dirname($targetFile);
+        if (!is_dir($targetDir)) {
+            mkdir($targetDir, 0777, true);
+        }
+        if (rename($tempFile, $targetFile)) {
+            echo "  ✓ Installed: " . $remotePath . "\n";
+            $installed[] = $remotePath;
         } else {
-            $dest = BASE_DIR . "/scripts/" . $basename;
-        }
-        
-        // Create directory if needed
-        $dir = dirname($dest);
-        if (!is_dir($dir)) {
-            mkdir($dir, 0777, true);
-        }
-        
-        // Move file
-        if (rename($file, $dest)) {
-            echo "  ✓ Updated: " . $basename . "\n";
+            echo "  ✗ Failed: " . $remotePath . "\n";
         }
     }
     
-    // Clean up temp directory
+    // 5. Delete files that are in manifest but no longer in remote list
+    $manifest = getSyncedManifest();
+    $toDelete = array_diff($manifest, $remoteFiles);
+    if (!empty($toDelete)) {
+        echo "\n" . YELLOW . "🧹 Removing obsolete scripts (removed from GitHub)..." . RESET . "\n";
+        foreach ($toDelete as $path) {
+            $localFile = BASE_DIR . "/" . $path;
+            if (file_exists($localFile)) {
+                if (unlink($localFile)) {
+                    echo "  ✓ Deleted: " . $path . "\n";
+                } else {
+                    echo "  ✗ Could not delete: " . $path . "\n";
+                }
+            } else {
+                echo "  ⚠️  Already missing: " . $path . "\n";
+            }
+        }
+    }
+    
+    // 6. Update manifest to match remote list
+    saveSyncedManifest($remoteFiles);
+    echo GREEN . "✓ Manifest updated.\n" . RESET;
+    
+    // 7. Cleanup temp dir
     $files = glob(TEMP_DIR . "/*");
     foreach ($files as $file) {
         if (is_file($file)) unlink($file);
     }
     @rmdir(TEMP_DIR);
     
-    echo "\n" . GREEN . "✅ Update applied successfully!" . RESET . "\n";
+    // 8. Also update core files (bot.php, version.json, functions/)
+    echo "\n" . YELLOW . "🔄 Updating core files..." . RESET . "\n";
+    $coreFiles = [
+        'bot.php',
+        'version.json',
+        'functions/function.php',
+        'functions/captcha.php'
+    ];
+    foreach ($coreFiles as $file) {
+        echo "  Downloading: " . $file . " ... ";
+        $content = githubDownloadFile($file);
+        if ($content !== false) {
+            $target = BASE_DIR . "/" . $file;
+            $dir = dirname($target);
+            if (!is_dir($dir)) mkdir($dir, 0777, true);
+            file_put_contents($target, $content);
+            echo GREEN . "✓" . RESET . "\n";
+        } else {
+            echo RED . "✗" . RESET . "\n";
+        }
+    }
+    
+    echo "\n" . GREEN . "✅ Update applied successfully!\n" . RESET;
+    echo YELLOW . "⚠️  Please restart the bot to load the new version.\n" . RESET;
     return true;
 }
 
@@ -325,7 +403,7 @@ function checkForUpdates() {
 }
 
 // ============================================
-// SCRIPT MANAGEMENT FUNCTIONS
+// SCRIPT MANAGEMENT FUNCTIONS (unchanged)
 // ============================================
 function getScripts() {
     $scripts = [];
@@ -335,20 +413,25 @@ function getScripts() {
         return $scripts;
     }
     
-    $files = glob(SCRIPTS_DIR . "/*.php");
-    
-    foreach ($files as $file) {
-        $basename = basename($file);
-        $excluded = ['function.php', 'captcha.php', 'bot.php', 'config.php'];
-        if (in_array($basename, $excluded)) continue;
-        
-        $scripts[] = [
-            'file' => $file,
-            'basename' => $basename,
-            'description' => getScriptDescription($basename),
-            'version' => getScriptVersion($basename),
-            'color' => getScriptColor($basename)
-        ];
+    // Get all subdirectories (categories)
+    $dirs = glob(SCRIPTS_DIR . "/*", GLOB_ONLYDIR);
+    foreach ($dirs as $dir) {
+        $category = basename($dir);
+        $files = glob($dir . "/*.php");
+        foreach ($files as $file) {
+            $basename = basename($file);
+            $excluded = ['function.php', 'captcha.php', 'bot.php', 'config.php'];
+            if (in_array($basename, $excluded)) continue;
+            
+            $scripts[] = [
+                'file'      => $file,
+                'basename'  => $basename,
+                'description' => getScriptDescription($basename),
+                'version'   => getScriptVersion($file),
+                'color'     => getScriptColor($basename),
+                'category'  => $category
+            ];
+        }
     }
     
     usort($scripts, function($a, $b) {
@@ -358,6 +441,7 @@ function getScripts() {
     return $scripts;
 }
 
+// (getScriptDescription, getScriptVersion, getScriptColor unchanged)
 function getScriptDescription($filename) {
     $descriptions = [
         'adcoins.cc.php' => 'AdCoins.cc Faucet Bot',
@@ -382,21 +466,16 @@ function getScriptDescription($filename) {
     return ucwords(trim($name));
 }
 
-function getScriptVersion($filename) {
-    $file = SCRIPTS_DIR . '/' . $filename;
-    
-    if (file_exists($file)) {
-        $content = file_get_contents($file);
-        
+function getScriptVersion($filePath) {
+    if (file_exists($filePath)) {
+        $content = file_get_contents($filePath);
         if (preg_match('/@version\s+([^\n]+)/i', $content, $matches)) {
             return trim($matches[1]);
         }
-        
         if (preg_match('/v(?:ersion)?\s*([0-9.]+)/i', $content, $matches)) {
             return 'v' . $matches[1];
         }
     }
-    
     return 'v1.0';
 }
 
@@ -423,16 +502,53 @@ function displayMainMenu() {
     
     $version = getCurrentVersion();
     $balance = function_exists('get_balance') ? get_balance() : 'N/A';
+    $update = checkUpdateStatus();
     
     echo "\n";
     echo CYAN . "╔════════════════════════════════════════════════════════════════════════════╗\n" . RESET;
     echo CYAN . "║" . WHITE . BOLD . "  🤖  BOT LAUNCHER v" . $version['version'] . str_repeat(" ", 47 - strlen($version['version'])) . CYAN . "║\n" . RESET;
     echo CYAN . "║" . WHITE . "  Repo: " . GITHUB_USERNAME . str_repeat(" ", 57 - strlen(GITHUB_USERNAME)) . CYAN . "║\n" . RESET;
     echo CYAN . "║" . WHITE . "  Balance: " . GREEN . $balance . WHITE . str_repeat(" ", 52 - strlen($balance)) . CYAN . "║\n" . RESET;
+    
+    if ($update['available']) {
+        echo CYAN . "║" . YELLOW . "  ⚠️  Update available: v" . $update['latest_version'] . 
+             " (current: v" . $update['current_version'] . ")" . 
+             str_repeat(" ", 39 - strlen($update['latest_version']) - strlen($update['current_version'])) . CYAN . "║\n" . RESET;
+    }
+    
     echo CYAN . "╠════════════════════════════════════════════════════════════════════════════╣\n" . RESET;
     echo CYAN . "║" . WHITE . "  [1] Run Scripts" . str_repeat(" ", 63) . CYAN . "║\n" . RESET;
     echo CYAN . "║" . WHITE . "  [2] Check for Updates" . str_repeat(" ", 58) . CYAN . "║\n" . RESET;
     echo CYAN . "║" . WHITE . "  [3] Exit" . str_repeat(" ", 70) . CYAN . "║\n" . RESET;
+    echo CYAN . "╚════════════════════════════════════════════════════════════════════════════╝\n" . RESET;
+    echo "\n";
+}
+
+function getCategories() {
+    $dirs = glob(SCRIPTS_DIR . "/*", GLOB_ONLYDIR);
+    $categories = [];
+    foreach ($dirs as $dir) {
+        $categories[] = basename($dir);
+    }
+    sort($categories);
+    return $categories;
+}
+
+function displayCategoryMenu($categories) {
+    clearScreen();
+    echo "\n";
+    echo CYAN . "╔════════════════════════════════════════════════════════════════════════════╗\n" . RESET;
+    echo CYAN . "║" . WHITE . BOLD . "  📂 SCRIPT CATEGORIES" . str_repeat(" ", 53) . CYAN . "║\n" . RESET;
+    echo CYAN . "╠════════════════════════════════════════════════════════════════════════════╣\n" . RESET;
+    echo CYAN . "║" . WHITE . "  [0] All scripts" . str_repeat(" ", 63) . CYAN . "║\n" . RESET;
+    $num = 1;
+    foreach ($categories as $cat) {
+        $display = ucwords(str_replace(['-', '_'], ' ', $cat));
+        $line = "  [" . $num . "] " . $display . str_repeat(" ", 65 - strlen($display) - strlen($num));
+        echo CYAN . "║" . WHITE . $line . CYAN . "║\n" . RESET;
+        $num++;
+    }
+    echo CYAN . "║" . WHITE . "  [" . $num . "] Back" . str_repeat(" ", 68) . CYAN . "║\n" . RESET;
     echo CYAN . "╚════════════════════════════════════════════════════════════════════════════╝\n" . RESET;
     echo "\n";
 }
@@ -451,7 +567,7 @@ function displayScriptsList($scripts) {
     echo CYAN . "╠════════════════════════════════════════════════════════════════════════════╣\n" . RESET;
     
     if (empty($scripts)) {
-        echo CYAN . "║" . YELLOW . "  ❌ No scripts found in " . SCRIPTS_DIR . str_repeat(" ", 23) . CYAN . "║\n" . RESET;
+        echo CYAN . "║" . YELLOW . "  ❌ No scripts found in this category." . str_repeat(" ", 39) . CYAN . "║\n" . RESET;
     } else {
         $i = 1;
         foreach ($scripts as $script) {
@@ -470,7 +586,7 @@ function displayScriptsList($scripts) {
     }
     
     echo CYAN . "╠════════════════════════════════════════════════════════════════════════════╣\n" . RESET;
-    echo CYAN . "║" . WHITE . "  [0] Back to Main Menu" . str_repeat(" ", 57) . CYAN . "║\n" . RESET;
+    echo CYAN . "║" . WHITE . "  [0] Back to Categories" . str_repeat(" ", 55) . CYAN . "║\n" . RESET;
     echo CYAN . "╚════════════════════════════════════════════════════════════════════════════╝\n" . RESET;
     echo "\n";
 }
@@ -482,7 +598,7 @@ function runScript($script) {
     echo "\n";
     
     $cwd = getcwd();
-    chdir(SCRIPTS_DIR);
+    chdir(SCRIPTS_DIR); // Set to scripts base for relative includes
     
     if (file_exists($script['file'])) {
         include $script['file'];
@@ -531,7 +647,7 @@ if (function_exists('pcntl_signal')) {
     });
 }
 
-// Check if scripts directory exists
+// Ensure scripts directory exists
 if (!is_dir(SCRIPTS_DIR)) {
     mkdir(SCRIPTS_DIR, 0777, true);
 }
@@ -553,50 +669,80 @@ while (true) {
             break;
             
         case '1':
+            $categories = getCategories();
+            
             while (true) {
-                displayScriptsList($scripts);
+                displayCategoryMenu($categories);
+                $maxCat = count($categories);
+                $catChoice = getUserInput("Choose category (0-" . ($maxCat) . ")", "0");
                 
-                if (empty($scripts)) {
-                    echo YELLOW . "📁 No scripts found in: " . SCRIPTS_DIR . "\n" . RESET;
-                    echo WHITE . "Press Enter to continue..." . RESET;
-                    fgets(STDIN);
-                    break;
+                if ($catChoice == ($maxCat + 1)) {
+                    break 2;
                 }
                 
-                $scriptChoice = getUserInput("Select script (1-" . count($scripts) . " or 0 to go back)", "0");
-                
-                if ($scriptChoice === '0' || $scriptChoice === '') {
-                    break;
-                }
-                
-                if (!is_numeric($scriptChoice) || $scriptChoice < 1 || $scriptChoice > count($scripts)) {
-                    echo RED . "❌ Invalid selection!\n" . RESET;
+                if (!is_numeric($catChoice) || $catChoice < 0 || $catChoice > $maxCat) {
+                    echo RED . "❌ Invalid choice!\n" . RESET;
                     echo WHITE . "Press Enter to continue..." . RESET;
                     fgets(STDIN);
                     continue;
                 }
                 
-                $selectedScript = $scripts[$scriptChoice - 1];
-                
-                echo "\n";
-                echo CYAN . "╔═══════════════════════════════════════════════════════════════╗\n" . RESET;
-                echo CYAN . "║" . WHITE . BOLD . "  📄 SCRIPT DETAILS" . str_repeat(" ", 50) . CYAN . "║\n" . RESET;
-                echo CYAN . "╠═══════════════════════════════════════════════════════════════╣\n" . RESET;
-                echo CYAN . "║" . WHITE . "  Name:        " . $selectedScript['color'] . $selectedScript['basename'] . RESET . str_repeat(" ", 27 - strlen($selectedScript['basename'])) . CYAN . "║\n" . RESET;
-                echo CYAN . "║" . WHITE . "  Description: " . substr($selectedScript['description'], 0, 27) . str_repeat(" ", 27 - strlen(substr($selectedScript['description'], 0, 27))) . CYAN . "║\n" . RESET;
-                echo CYAN . "║" . WHITE . "  Version:     " . $selectedScript['version'] . str_repeat(" ", 27 - strlen($selectedScript['version'])) . CYAN . "║\n" . RESET;
-                echo CYAN . "╚═══════════════════════════════════════════════════════════════╝\n" . RESET;
-                echo "\n";
-                
-                $confirm = getUserInput("Run this script? (y/n)", "y");
-                if (strtolower($confirm) !== 'y') {
-                    continue;
+                if ($catChoice == 0) {
+                    $filtered = $scripts;
+                } else {
+                    $selectedCategory = $categories[$catChoice - 1];
+                    $filtered = array_filter($scripts, function($s) use ($selectedCategory) {
+                        return $s['category'] === $selectedCategory;
+                    });
+                    $filtered = array_values($filtered);
                 }
                 
-                runScript($selectedScript);
-                
-                echo "\n" . WHITE . "Press Enter to continue..." . RESET;
-                fgets(STDIN);
+                while (true) {
+                    displayScriptsList($filtered);
+                    
+                    if (empty($filtered)) {
+                        echo YELLOW . "📁 No scripts in this category.\n" . RESET;
+                        echo WHITE . "Press Enter to continue..." . RESET;
+                        fgets(STDIN);
+                        break;
+                    }
+                    
+                    $scriptChoice = getUserInput("Select script (1-" . count($filtered) . " or 0 to go back)", "0");
+                    
+                    if ($scriptChoice === '0' || $scriptChoice === '') {
+                        break;
+                    }
+                    
+                    if (!is_numeric($scriptChoice) || $scriptChoice < 1 || $scriptChoice > count($filtered)) {
+                        echo RED . "❌ Invalid selection!\n" . RESET;
+                        echo WHITE . "Press Enter to continue..." . RESET;
+                        fgets(STDIN);
+                        continue;
+                    }
+                    
+                    $selectedScript = $filtered[$scriptChoice - 1];
+                    
+                    echo "\n";
+                    echo CYAN . "╔═══════════════════════════════════════════════════════════════╗\n" . RESET;
+                    echo CYAN . "║" . WHITE . BOLD . "  📄 SCRIPT DETAILS" . str_repeat(" ", 50) . CYAN . "║\n" . RESET;
+                    echo CYAN . "╠═══════════════════════════════════════════════════════════════╣\n" . RESET;
+                    echo CYAN . "║" . WHITE . "  Name:        " . $selectedScript['color'] . $selectedScript['basename'] . RESET . str_repeat(" ", 27 - strlen($selectedScript['basename'])) . CYAN . "║\n" . RESET;
+                    echo CYAN . "║" . WHITE . "  Description: " . substr($selectedScript['description'], 0, 27) . str_repeat(" ", 27 - strlen(substr($selectedScript['description'], 0, 27))) . CYAN . "║\n" . RESET;
+                    echo CYAN . "║" . WHITE . "  Version:     " . $selectedScript['version'] . str_repeat(" ", 27 - strlen($selectedScript['version'])) . CYAN . "║\n" . RESET;
+                    echo CYAN . "║" . WHITE . "  Category:    " . ucwords(str_replace(['-', '_'], ' ', $selectedScript['category'])) . str_repeat(" ", 27 - strlen(ucwords(str_replace(['-', '_'], ' ', $selectedScript['category'])))) . CYAN . "║\n" . RESET;
+                    echo CYAN . "╚═══════════════════════════════════════════════════════════════╝\n" . RESET;
+                    echo "\n";
+                    
+                    $confirm = getUserInput("Run this script? (y/n)", "y");
+                    if (strtolower($confirm) !== 'y') {
+                        continue;
+                    }
+                    
+                    runScript($selectedScript);
+                    
+                    echo "\n" . WHITE . "Press Enter to continue..." . RESET;
+                    fgets(STDIN);
+                }
             }
             break;
             

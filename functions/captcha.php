@@ -102,6 +102,23 @@ function rotation($base,$piece,$crop){
     }
 }
 
+function motion($base){
+    $data = json_encode([
+        "apikey" => anticaptcha_key,
+        "mode" => "limefaucet",
+        "image" => $base,
+    ]);
+
+    $create = json_decode(Run(api_endpoint, ["Content-Type: application/json"], $data)['body'], true);
+
+    if (empty($create['jobId'])) {
+        return ["success" => false, "message" => "Failed to create adslab job", "response" => $create];
+    }else{
+        return poll($create['jobId']);
+    }
+}
+
+
 function rs_upsidedown(string $html, string $url): array {
     // 1. Fetch captcha image
     $imageBytes = (new RsCaptchaImage())->fetch($html, $url);

@@ -49,9 +49,11 @@ if (!defined("anticaptcha_key")) {
 }
 
 // ============================================
-// GITHUB API FUNCTIONS
+// GITHUB API FUNCTIONS (with encoding fix)
 // ============================================
 function githubApiRequest($endpoint) {
+    // Encode spaces in the endpoint (GitHub API requires %20)
+    $endpoint = str_replace(' ', '%20', $endpoint);
     $url = GITHUB_API_URL . $endpoint;
     
     $ch = curl_init();
@@ -87,8 +89,8 @@ function githubDownloadFile($path) {
         return base64_decode($data['content']);
     }
     
-    // Fallback to raw URL
-    $rawUrl = "https://raw.githubusercontent.com/" . GITHUB_USERNAME . "/" . GITHUB_REPO . "/" . GITHUB_BRANCH . "/" . $path;
+    // Fallback to raw URL (also encode spaces)
+    $rawUrl = "https://raw.githubusercontent.com/" . GITHUB_USERNAME . "/" . GITHUB_REPO . "/" . GITHUB_BRANCH . "/" . str_replace(' ', '%20', $path);
     
     $ch = curl_init();
     curl_setopt_array($ch, [
@@ -124,9 +126,9 @@ function githubGetAllFiles($path = 'scripts') {
     $files = [];
     foreach ($data as $item) {
         if ($item['type'] === 'file' && pathinfo($item['name'], PATHINFO_EXTENSION) === 'php') {
-            $files[] = $item['path']; // e.g., "scripts/apikey/foo.php"
+            $files[] = $item['path']; // e.g., "scripts/apikey/foo.php" or "scripts/telegram bots/bot.php"
         } elseif ($item['type'] === 'dir') {
-            $subFiles = githubGetAllFiles($item['path']);
+            $subFiles = githubGetAllFiles($item['path']); // pass the full path (with spaces)
             $files = array_merge($files, $subFiles);
         }
     }
@@ -264,12 +266,13 @@ function applyUpdate($latest) {
     $total = count($remoteFiles);
     
     foreach ($remoteFiles as $remotePath) {
-        // e.g., "scripts/apikey/foo.php"
+        // e.g., "scripts/apikey/foo.php" or "scripts/telegram bots/bot.php"
         echo "  Downloading: " . $remotePath . " ... ";
         
         $content = githubDownloadFile($remotePath);
         if ($content !== false) {
-            $tempFile = TEMP_DIR . "/" . str_replace('/', '_', $remotePath); // flatten for temp
+            // Flatten path for temp storage (replace slashes and spaces? we keep as is)
+            $tempFile = TEMP_DIR . "/" . str_replace('/', '_', $remotePath);
             file_put_contents($tempFile, $content);
             $downloaded++;
             echo GREEN . "✓" . RESET . "\n";
@@ -441,7 +444,6 @@ function getScripts() {
     return $scripts;
 }
 
-// (getScriptDescription, getScriptVersion, getScriptColor unchanged)
 function getScriptDescription($filename) {
     $descriptions = [
         'adcoins.cc.php' => 'AdCoins.cc Faucet Bot',
@@ -598,7 +600,7 @@ function runScript($script) {
     echo "\n";
     
     $cwd = getcwd();
-    chdir(SCRIPTS_DIR); // Set to scripts base for relative includes
+    chdir(SCRIPTS_DIR);
     
     if (file_exists($script['file'])) {
         include $script['file'];

@@ -247,7 +247,6 @@ function faucet($email,$proxy){
         $payload = " ";
         $r = Run("https://moonptc.com/api/faucet/ac-captcha/challenge", headerss(), $payload, null, $proxy, 2, $email);
         $r = json_decode($r['body'],true);
-        print_r($r);
 
         $session_id = $r['session_id'];
         $id = $r['challenge']['id'];
@@ -262,7 +261,7 @@ function faucet($email,$proxy){
         $r = Run("https://moonptc.com/api/faucet/ac-captcha/verify", headerss(), $verify_payload, null, $proxy, 2, $email);
 
         $js = json_decode($r['body'], true);
-        print_r($js);
+
         if (isset($js['ok']) && $js['ok'] === true) {
             $verifyToken = $js['token'];
         } else {

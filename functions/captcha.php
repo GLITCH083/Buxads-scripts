@@ -119,7 +119,7 @@ function solve_adslab($sitekey, $domain, $type = "static", $subid = "widget_user
         "json"    => "1",
     ]);
     $create = json_decode(Run(api_in, ["Content-Type: application/json"], $data)['body'], true);
-    print_r($create);
+
     if (empty($create['request']) || (int)($create['status'] ?? 0) !== 1) {
         return ["success" => false, "message" => "Failed to create adslab job", "response" => $create];
     }

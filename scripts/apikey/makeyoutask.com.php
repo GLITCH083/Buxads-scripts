@@ -267,47 +267,127 @@ function balance($email, $proxy) {
     return 0;
 }
 
-function ptc($email,$proxy){
-    while(true){
-        $r = Run("https://makeyoutask.com/ptc",headers(),null,null,$proxy,2,$email);
-        $viewId = explode('"',explode('href="https://sefablog.online/', $r['body'])[1])[0];
-        $host = "sefablog.online";
-        if(empty($viewId)){
-            $viewId = explode('"',explode('https://turkblog.online/', $r['body'])[1])[0];
-            $host = "turkblog.online";
+function ptc($email, $proxy) {
+    while (true) {
+        // 1. Get the PTC page
+        $r = Run("https://makeyoutask.com/ptc", headers(), null, null, $proxy, 2, $email);
+        $body = $r['body'];
+
+        // 2. Extract the first "Watch Video" link (class="btn-watch-action")
+        $watchUrl = '';
+        // Pattern: any <a> tag with class containing "btn-watch-action", capture the href
+        if (preg_match('/<a[^>]*class\s*=\s*["\']([^"\']*btn-watch-action[^"\']*)["\'][^>]*href\s*=\s*["\']([^"\']+)["\']/i', $body, $matches)) {
+            $watchUrl = $matches[2]; // second capture group is href
         }
-        if(empty($viewId)){return;}
 
-        $r = Run("https://$host/$viewId",headers(),null,null,$proxy,2,$email);
-        $r = Run($r['info']['redirect_url'],headers(),null,null,$proxy,2,$email);
-
-        $action = explode('"',explode('<form action="', $r['body'])[1])[0];
-
-        $csrf = explode('"',explode('<input type="hidden" name="csrf_token_name" value="',$r['body'])[1])[0];
-        $timer = explode(';',explode('const countdownTime = ', $r['body'])[1])[0];
-        countdown($timer,"⏳ Waiting ");
-        $sitekey = explode('"',explode('sitekey="', $r['body'])[1])[0];
-        $cap = captcha($r['info']['url'], $sitekey, "turnstile");
-        if(!$cap['token']){
-            return false;
+        // Fallback: if regex fails, try domain-specific extraction (for old & new domains)
+        if (empty($watchUrl)) {
+            // Try to find any link that starts with https:// and contains "tecnoblogs", "sefablog", or "turkblog"
+            $patterns = [
+                '/https?:\/\/tecnoblogs\.online\/[^\s"\']+/i',
+                '/https?:\/\/sefablog\.online\/[^\s"\']+/i',
+                '/https?:\/\/turkblog\.online\/[^\s"\']+/i',
+            ];
+            foreach ($patterns as $pattern) {
+                if (preg_match($pattern, $body, $matches)) {
+                    $watchUrl = $matches[0];
+                    break;
+                }
+            }
         }
-        $token = $cap['token'];
 
+        // If still empty, something is wrong – exit loop
+        if (empty($watchUrl)) {
+            echo "No watch link found on page.\n";
+            return;
+        }
+
+        // 3. Visit the watch URL
+        $r = Run($watchUrl, headers(), null, null, $proxy, 2, $email);
+
+        // 4. Follow any redirect (if present)
+        if (!empty($r['info']['redirect_url'])) {
+            $r = Run($r['info']['redirect_url'], headers(), null, null, $proxy, 2, $email);
+        }
+
+        // 5. Extract form action, CSRF token, timer, and sitekey
+        $body = $r['body'];
+
+        // Form action
+        $action = '';
+        if (preg_match('/<form[^>]*action\s*=\s*["\']([^"\']+)["\']/i', $body, $matches)) {
+            $action = $matches[1];
+        }
+
+        // CSRF token
+        $csrf = '';
+        if (preg_match('/<input[^>]*name\s*=\s*["\']csrf_token_name["\'][^>]*value\s*=\s*["\']([^"\']+)["\']/i', $body, $matches)) {
+            $csrf = $matches[1];
+        }
+
+        // Countdown timer
+        $timer = 0;
+        if (preg_match('/const\s+countdownTime\s*=\s*(\d+)/i', $body, $matches)) {
+            $timer = (int)$matches[1];
+            countdown($timer, "⏳ Waiting ");
+        } else {
+            // fallback: try other patterns
+            if (preg_match('/countdownTime\s*=\s*(\d+)/i', $body, $matches)) {
+                $timer = (int)$matches[1];
+                countdown($timer, "⏳ Waiting ");
+            }
+        }
+
+        // Sitekey (turnstile)
+        $sitekey = '';
+        if (preg_match('/sitekey\s*=\s*["\']([^"\']+)["\']/i', $body, $matches)) {
+            $sitekey = $matches[1];
+        }
+
+        if (empty($sitekey)) {
+            // Sometimes sitekey is in a data attribute or similar
+            if (preg_match('/data-sitekey\s*=\s*["\']([^"\']+)["\']/i', $body, $matches)) {
+                $sitekey = $matches[1];
+            }
+        }
+
+        // If no sitekey, maybe captcha not required – skip solving
+        $token = '';
+        if (!empty($sitekey)) {
+            $cap = captcha($r['info']['url'] ?? $watchUrl, $sitekey, "turnstile");
+            if (!$cap || empty($cap['token'])) {
+                return false;
+            }
+            $token = $cap['token'];
+        }
+
+        // 6. Submit the form
         $payload = http_build_query([
             "captcha" => "turnstile",
             "cf-turnstile-response" => $token,
             "csrf_token_name" => $csrf,
         ]);
 
-        $r = Run($action,headerss($host),$payload,null,$proxy,2,$email);
+        // Determine host for headers
+        $host = parse_url($action, PHP_URL_HOST) ?: parse_url($watchUrl, PHP_URL_HOST);
+        $r = Run($action, headerss($host), $payload, null, $proxy, 2, $email);
 
-        $msg = strip_tags(explode("',",explode("html: '", $r['body'])[1])[0]);
-        $redirect_url = explode('"',explode('window.location.href = "', $r['body'])[1])[0];
+        // 7. Parse result
+        $msg = '';
+        if (strpos($r['body'], "html: '") !== false) {
+            $msg = strip_tags(explode("',", explode("html: '", $r['body'])[1])[0]);
+        }
+        $redirect_url = '';
+        if (strpos($r['body'], 'window.location.href = "') !== false) {
+            $redirect_url = explode('"', explode('window.location.href = "', $r['body'])[1])[0];
+        }
+
+        // 8. Update global counters and output
         $GLOBALS['ptc_totalclaims']++;
-            if ($msg) {
+        if ($msg) {
             $GLOBALS['ptc_claims']++;
             echo WHITE . '[ ' . GREEN . $GLOBALS['ptc_claims'] . WHITE . " / " . YELLOW . $GLOBALS['ptc_totalclaims'] . WHITE . ' ] ' . GREEN . $redirect_url . RESET . "\n";
-            echo WHITE . '[ ' . GREEN . $GLOBALS['ptc_claims'] . WHITE . " / " . YELLOW . $GLOBALS['ptc_totalclaims'] . WHITE . ' ] ' . GREEN . $msg . WHITE . " | " . balance($email,$proxy) . " | " . YELLOW  . get_balance() . RESET . "\n";
+            echo WHITE . '[ ' . GREEN . $GLOBALS['ptc_claims'] . WHITE . " / " . YELLOW . $GLOBALS['ptc_totalclaims'] . WHITE . ' ] ' . GREEN . $msg . WHITE . " | " . balance($email, $proxy) . " | " . YELLOW . get_balance() . RESET . "\n";
         }
     }
 }
@@ -369,8 +449,8 @@ function runAccount($account) {
         $GLOBALS['faucet_claims'] = 0;
         $GLOBALS['faucet_totalclaims'] = 0;
         while(true){
-        autoWatch($email,$proxy);
         ptc($email, $proxy);
+        autoWatch($email,$proxy);
         countdown(60,"Retrying In ");
         }
     } else {

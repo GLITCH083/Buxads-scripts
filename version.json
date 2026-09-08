@@ -1,7 +1,8 @@
 {
-    "version": "1.1.1",
+    "version": "1.1.2",
     "features": [
-        "Fix: Auto Crash Limefaucet & MoonPTC"
+        "Fix: ALl Scripts",
+        "Added: 3 Faucet Fail limiter"
     ],
-    "last_updated": "2026-9-02"
+    "last_updated": "2026-9-06"
 }

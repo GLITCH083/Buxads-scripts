@@ -292,6 +292,7 @@ function faucet($email,$proxy){
 
         $csrf = explode('"',explode('<input type="hidden" name="csrf_token_name" id="token" value="', $r['body'])[1])[0];
         $bot = antibot($r['body']);
+
         if($bot){
             $payload = http_build_query(["antibotlinks" => $bot,"csrf_token_name" => $csrf]);
         }else{
@@ -306,8 +307,14 @@ function faucet($email,$proxy){
         
         $GLOBALS['faucet_totalclaims']++;
         if($msg){
+            $GLOBALS['failed'] = 0;
             $GLOBALS['faucet_claims']++;
             echo WHITE . '[ ' . GREEN . $GLOBALS['faucet_claims'] . WHITE . " / " . YELLOW . $GLOBALS['ptc_totalclaims'] . WHITE . ' ] ' . GREEN . "$msg" . WHITE . " | " . balance($email,$proxy) . " | " . YELLOW  . get_balance() . RESET . "\n";
+        }else{
+            $GLOBALS['failed']++;
+            if($GLOBALS['failed'] == 3){
+                exit("3 Incorrect Claims\n");
+            }
         }
     }
 }

@@ -5,7 +5,6 @@ date_default_timezone_set("Asia/Karachi");
 define("APP_HOST", "buxads-Bot");
 define("BASE_DIR", dirname(__DIR__));
 
-// Enable error reporting for debugging
 error_reporting(0);
 
 // Include functions
@@ -40,6 +39,7 @@ $GLOBALS['faucet_claims'] = 0;
 $GLOBALS['faucet_totalclaims'] = 0;
 $GLOBALS['shortlink_claims'] = 0;
 $GLOBALS['shortlink_totalclaims'] = 0;
+$GLOBALS['failed'] = 0;
 
 // ============================================
 // ACCOUNT MANAGEMENT FUNCTIONS
@@ -253,34 +253,19 @@ function faucet($email, $proxy = null){
     while(true){
         try {
             $r = Run("https://adcoins.cc/faucet", headers(), null, null, $proxy, 0, $email);
+
             if(!isset($r['info']['http_code']) || $r['info']['http_code'] != 200){ 
                 sleep(5);
                 continue;
             }
 
-            // Check cooldown
-            if (preg_match('/x-init="initCooldown\(([^)]+)\)/', $r['body'], $matches)) {
-                $timer = intval($matches[1]);
+                $timer = explode('"',explode(' data-cooldown="', $r['body'])[1])[0];
+                $timer = intval($timer);
                 if($timer > 0){
                     countdown($timer, "⏳ Waiting");
                     continue;
                 }
-            }
-
-            // Get slider values
-            if (preg_match('/sliderTarget:\s*([^,]+)/', $r['body'], $matches)) {
-                $sliderTarget = intval($matches[1]);
-            } else {
-                sleep(2);
-                continue;
-            }
             
-            if (preg_match("/sliderToken: '([^']+)'/", $r['body'], $matches)) {
-                $sliderToken = $matches[1];
-            } else {
-                sleep(2);
-                continue;
-            }
 
             // Get captcha
             $image = Run("https://adcoins.cc/captcha/generate.php", headers(), " ", null, $proxy, 0, $email);
@@ -306,16 +291,16 @@ function faucet($email, $proxy = null){
             $js = json_decode($result['body'], true);
           
             if(!isset($js['success']) || !$js['success']){
+                $GLOBALS['failed']++;
+                if($GLOBALS['failed'] == 3){
+                    exit("3 Incorrect Claims\n");
+                }
                 sleep(3);
                 continue;
             }
             
             $payload = http_build_query([
                 "action" => "claim",
-                "captcha_token" => $sliderToken,
-                "slider_position" => $sliderTarget,
-                "hcaptcha_token" => "",
-                "turnstile_token" => "",
                 "n1_token" => $x_n1_token,
                 "n1_answer" => "verified"
             ]);
@@ -324,12 +309,17 @@ function faucet($email, $proxy = null){
             $GLOBALS['faucet_totalclaims']++;
             
             if(isset($result['success']) && $result['success']){
+                $GLOBALS['failed'] = 0;
                 $GLOBALS['faucet_claims']++;
                 $balance = get_balance($email, $proxy);
                 echo WHITE . '[ ' . GREEN . $GLOBALS['faucet_claims'] . WHITE . " / " . YELLOW . $GLOBALS['faucet_totalclaims'] . WHITE . ' ] ' . 
                      GREEN . "+{$result['reward']} Coins | " . RESET . " {$result['new_balance']} Coins " .
                      " | Api Balance: " . YELLOW . $balance . " Token" . RESET . "\n";
             } else {
+                $GLOBALS['failed']++;
+                if($GLOBALS['failed'] == 3){
+                    exit("3 Incorrect Claims\n");
+                }
                 $msg = isset($result['message']) ? $result['message'] : 'Unknown error';
                 echo RED . "[✗] Claim failed: " . $msg . "\n" . RESET;
             }

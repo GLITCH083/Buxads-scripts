@@ -265,6 +265,10 @@ function faucet($email,$proxy){
         if (isset($js['ok']) && $js['ok'] === true) {
             $verifyToken = $js['token'];
         } else {
+            $GLOBALS['failed']++;
+            if($GLOBALS['failed'] == 3){
+                exit("3 Incorrect Claims\n");
+            }
             continue;
         }
 
@@ -273,8 +277,14 @@ function faucet($email,$proxy){
         $js = json_decode($r['body'],true);
         $GLOBALS['faucet_totalclaims']++;
         if($js['ok']){
+            $GLOBALS['failed'] = 0;
             $GLOBALS['faucet_claims']++;
             echo WHITE . '[ ' . GREEN . $GLOBALS['faucet_claims'] . WHITE . " / " . YELLOW . $GLOBALS['faucet_totalclaims'] . WHITE . ' ] ' . GREEN . "+{$js['finalReward']}" . WHITE . " | {$js['newBalance']} | " . YELLOW . get_balance() . RESET . "\n";
+        }else{
+            $GLOBALS['failed']++;
+            if($GLOBALS['failed'] == 3){
+                exit("3 Incorrect Claims\n");
+            }
         }
     }
 }

@@ -332,10 +332,16 @@ function faucet($email, $proxy) {
             
             $GLOBALS['faucet_totalclaims']++;
             if ($msg) {
+                $GLOBALS['failed'] = 0;
                 $claimCount++;
                 $GLOBALS['faucet_claims']++;
                 echo WHITE . '[ ' . GREEN . $GLOBALS['faucet_claims'] . WHITE . " / " . YELLOW . $GLOBALS['faucet_totalclaims'] . WHITE . ' ] ' . GREEN . $msg . WHITE . " | " . YELLOW . get_balance() . RESET .  "\n";
                 sleep(5);
+            }else{
+                $GLOBALS['failed']++;
+            if($GLOBALS['failed'] == 3){
+                exit("3 Incorrect Claims\n");
+                }
             }
         }
     }
@@ -394,9 +400,9 @@ function shortlink($email, $proxy) {
 
             $redirect = $r['info']['redirect_url'];
             $bypass = Bypass($redirect);
-            if ($bypass['original_url']) {
+            if ($bypass['token']) {
                 countdown(rand(45,60), "");
-                $r = Run($bypass['original_url'],headers(),null,null,$proxy,0,$email);
+                $r = Run($bypass['token'],headers(),null,null,$proxy,0,$email);
                 if ($r['info']['redirect_url']) {
                     $r = Run($r['info']['redirect_url'],headers(),null,null,$proxy,0,$email);
                     if ($r['info']['redirect_url']) {

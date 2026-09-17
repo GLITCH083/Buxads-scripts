@@ -264,46 +264,37 @@ function login($email, $password = '', $proxy) {
 
 function faucet($email, $proxy) {
   
-    
+    $coins = ['ltc','usdt','dgb','sol','fey','pepe','doge'];
+    foreach($coins as $coin){
     while (true) {
-        
-        $r = Run("https://spaceshooter.net/faucet/doge",headers(),null,null,$proxy,0,$email);
+    
+        $r = Run("https://spaceshooter.net/faucet/$coin",headers(),null,null,$proxy,0,$email);
 
-        if ($r['info']['redirect_url']) {
-            shortlink($email, $proxy);
-            continue;
+        if ($r['info']['redirect_url']) {shortlink($email, $proxy,$coin);continue;}
+    
+    if ($r['info']['http_code'] == 200) {
+        $body = $r['body'];
+        
+      
+        $timer = 0;
+        if (preg_match('/let\s+wait\s*=\s*(\d+)/', $body, $m)) {
+            $timer = intval($m[1]);
+        } elseif (preg_match('/var\s+wait\s*=\s*(\d+)/', $body, $m)) {
+            $timer = intval($m[1]);
+        } elseif (preg_match('/countdown\s*\(\s*(\d+)\s*\)/', $body, $m)) {
+            $timer = intval($m[1]);
         }
         
-        if ($r['info']['http_code'] == 200) {
-            $body = $r['body'];
-            
-          
-            $timer = 0;
-            if (preg_match('/let\s+wait\s*=\s*(\d+)/', $body, $m)) {
-                $timer = intval($m[1]);
-            } elseif (preg_match('/var\s+wait\s*=\s*(\d+)/', $body, $m)) {
-                $timer = intval($m[1]);
-            } elseif (preg_match('/countdown\s*\(\s*(\d+)\s*\)/', $body, $m)) {
-                $timer = intval($m[1]);
-            }
-            
-            if ($timer) {
-                countdown($timer,"⏳ Waiting ");
-                continue;
-            }
-            
-            // Extract form tokens
+        if ($timer) {countdown($timer,"⏳ Waiting ");continue;}
+        
+        // Extract form tokens
             $csrf = explode('"', explode('<input type="hidden" name="ci_csrf_token" id="token" value="', $body)[1])[0];
             $token = explode('"', explode('<input type="hidden" name="token" value="', $body)[1])[0];
             $cur = explode('"', explode('<input type="hidden" name="currency" value="', $body)[1])[0];
             $rscaptcha_token = explode('"', explode('<input type="hidden" name="rscaptcha_token" value="', $body)[1])[0];
             $captcha = rs_upsidedown($body, "https://rscaptcha.com/assets/generated_captcha/");
-            
-            if (!$captcha['rs-response']) {
-                continue;
-            }
-            
-            // Prepare payload
+        
+            if (!$captcha['rs-response']) {continue;}
             $ipData = json_decode(Run("http://ip-api.com/json/?fields=query,timezone", [], null, "data", $proxy, 2, $email)['body'] ?? '{}', true);
             $ip = $ipData['query'] ?? '';
             $timezone = $ipData['timezone'] ?? '';
@@ -311,25 +302,19 @@ function faucet($email, $proxy) {
             $userAgent = SaveData(APP_HOST, 'UserAgent');
             $utt = $timezone;
             $uf = md5($ip . $userAgent . $ls . $utt);
-            
-            $payload = http_build_query([
-                "ci_csrf_token" => $csrf,
-                "token" => $token,
-                "currency" => $cur,
-                "captcha" => "rscaptcha",
-                "rscaptcha_token" => $rscaptcha_token,
-                "rscaptcha_response" => $captcha['rs-response'],
-                "uf" => $uf,
-                "utt" => $utt,
-                "ls" => $ls
-            ]);
-            
-            $r = Run("https://spaceshooter.net/faucet/verify",headerss(),$payload,null,$proxy,0,$email);
-            
-            $r = Run("https://spaceshooter.net/faucet/doge",headers(),null,null,$proxy,0,$email);
         
+            $payload = http_build_query(["ci_csrf_token" => $csrf,"token" => $token,"currency" => $cur,"captcha" => "rscaptcha","rscaptcha_token" => $rscaptcha_token,"rscaptcha_response" => $captcha['rs-response'],"uf" => $uf,"utt" => $utt,"ls" => $ls]);
+        
+            $r = Run("https://spaceshooter.net/faucet/verify",headerss(),$payload,null,$proxy,0,$email);
+        
+            $r = Run("https://spaceshooter.net/faucet/$coin",headers(),null,null,$proxy,0,$email);
+    
             $msg = explode("',", explode("text: '", $r['body'])[1])[0] ?? '';
-            
+
+            if($msg == "The faucet does not have sufficient funds for this transaction."){
+                break;
+            }
+        
             $GLOBALS['faucet_totalclaims']++;
             if ($msg) {
                 $GLOBALS['failed'] = 0;
@@ -338,7 +323,7 @@ function faucet($email, $proxy) {
                 echo WHITE . '[ ' . GREEN . $GLOBALS['faucet_claims'] . WHITE . " / " . YELLOW . $GLOBALS['faucet_totalclaims'] . WHITE . ' ] ' . GREEN . $msg . WHITE . " | " . YELLOW . get_balance() . RESET .  "\n";
                 sleep(5);
             }else{
-                $GLOBALS['failed']++;
+            $GLOBALS['failed']++;
             if($GLOBALS['failed'] == 3){
                 exit("3 Incorrect Claims\n");
                 }
@@ -346,80 +331,81 @@ function faucet($email, $proxy) {
         }
     }
 }
+}
 
-function shortlink($email, $proxy) {
+function shortlink($email, $proxy,$coin) {
     while (true) {
-        $r = Run("https://spaceshooter.net/links/doge",headers(),null,null,$proxy,0,$email);
+    $r = Run("https://spaceshooter.net/links/$coin",headers(),null,null,$proxy,0,$email);
 
-        preg_match_all('/<h5>(.*?)<\/h5>/', $r['body'], $names);
-        preg_match_all('/<\/i>\s*(\d+)\/\d+\s*<\/div>/', $r['body'], $claims);
-        preg_match_all('/<a href="(.*?)" class="btn_sl" >Click To Visit<\/a>/', $r['body'], $urls);
+    preg_match_all('/<h5>(.*?)<\/h5>/', $r['body'], $names);
+    preg_match_all('/<\/i>\s*(\d+)\/\d+\s*<\/div>/', $r['body'], $claims);
+    preg_match_all('/<a href="(.*?)" class="btn_sl" >Click To Visit<\/a>/', $r['body'], $urls);
 
-        $items = [];
-        foreach ($names[1] as $index => $name) {
-            $items[] = [
-                'name'  => trim($name),
-                'claim' => $claims[1][$index] ?? null,
-                'link'  => $urls[1][$index] ?? null
-            ];
-        }
+    $items = [];
+    foreach ($names[1] as $index => $name) {
+        $items[] = [
+            'name'  => trim($name),
+            'claim' => $claims[1][$index] ?? null,
+            'link'  => $urls[1][$index] ?? null
+        ];
+    }
 
-    
-        foreach ($items as $detail) {
-            $url = $detail['link'];
-            $host = parse_url($url, PHP_URL_HOST);
 
-            if ($host !== 'spaceshooter.net') continue;
+    foreach ($items as $detail) {
+        $url = $detail['link'];
+        $host = parse_url($url, PHP_URL_HOST);
 
-            $allowed = ['Adlink', 'Shrinkme', 'Clksh', 'Shrinkearn'];
-            $nameOk = false;
-            foreach ($allowed as $needle) {
-                if (stripos($detail['name'], $needle) !== false) {
-                    $nameOk = true;
-                    break;
-                }
+        if ($host !== 'spaceshooter.net') continue;
+
+        $allowed = ['Adlink', 'Shrinkme', 'Clksh', 'Shrinkearn'];
+        $nameOk = false;
+        foreach ($allowed as $needle) {
+            if (stripos($detail['name'], $needle) !== false) {
+                $nameOk = true;
+                break;
             }
-            if (!$nameOk) continue;
-            $r = Run($url,headers(),null,null,$proxy,0,$email);
+        }
+        if (!$nameOk) continue;
+        $r = Run($url,headers(),null,null,$proxy,0,$email);
 
-            $sitekey = explode('"', explode('<div class="h-captcha" data-sitekey="', $r['body'])[1])[0];
-            $cap = captcha($url, $sitekey, "hcaptcha")['token'];
-            if (!$cap) return;
+        $sitekey = explode('"', explode('<div class="h-captcha" data-sitekey="', $r['body'])[1])[0];
+        $cap = captcha($url, $sitekey, "hcaptcha")['token'];
+        if (!$cap) return;
 
-            $csrf = explode('"', explode('<input type="hidden" name="ci_csrf_token" id="token" value="', $r['body'])[1])[0];
-            $token = explode('"', explode('<input type="hidden" name="token" value="', $r['body'])[1])[0];
+        $csrf = explode('"', explode('<input type="hidden" name="ci_csrf_token" id="token" value="', $r['body'])[1])[0];
+        $token = explode('"', explode('<input type="hidden" name="token" value="', $r['body'])[1])[0];
 
-            $payload = http_build_query([
-                "ci_csrf_token" => $csrf,
-                "token" => $token,
-                "captcha" => "hcaptcha",
-                "g-recaptcha-response" => $cap,
-                "h-captcha-response" => $cap
-            ]);
-            $r = Run($url,headerss(),$payload,null,$proxy,0,$email);
+        $payload = http_build_query([
+            "ci_csrf_token" => $csrf,
+            "token" => $token,
+            "captcha" => "hcaptcha",
+            "g-recaptcha-response" => $cap,
+            "h-captcha-response" => $cap
+        ]);
+        $r = Run($url,headerss(),$payload,null,$proxy,0,$email);
 
-            $redirect = $r['info']['redirect_url'];
-            $bypass = Bypass($redirect);
-            if ($bypass['token']) {
-                countdown(rand(45,60), "");
-                $r = Run($bypass['token'],headers(),null,null,$proxy,0,$email);
+        $redirect = $r['info']['redirect_url'];
+        $bypass = Bypass($redirect);
+        if ($bypass['token']) {
+            countdown(rand(45,60), "");
+            $r = Run($bypass['token'],headers(),null,null,$proxy,0,$email);
+            if ($r['info']['redirect_url']) {
+                $r = Run($r['info']['redirect_url'],headers(),null,null,$proxy,0,$email);
                 if ($r['info']['redirect_url']) {
                     $r = Run($r['info']['redirect_url'],headers(),null,null,$proxy,0,$email);
-                    if ($r['info']['redirect_url']) {
-                        $r = Run($r['info']['redirect_url'],headers(),null,null,$proxy,0,$email);
-                    }
                 }
             }
-            $msg = explode("',", explode("text: '", $r['body'])[1])[0] ?? '';
+        }
+        $msg = explode("',", explode("text: '", $r['body'])[1])[0] ?? '';
 
-            $GLOBALS['shortlink_totalclaims']++;
-            if ($msg) {
-                $GLOBALS['shortlink_claims']++;
-                echo WHITE . '[ ' . GREEN . $GLOBALS['shortlink_claims'] . WHITE . " / " . YELLOW . $GLOBALS['shortlink_totalclaims'] . WHITE . ' ] ' . '| ' . WHITE . $redirect . ' | ' . GREEN . $msg . RESET . "\n";
-                return;
-            }
+        $GLOBALS['shortlink_totalclaims']++;
+        if ($msg) {
+            $GLOBALS['shortlink_claims']++;
+            echo WHITE . '[ ' . GREEN . $GLOBALS['shortlink_claims'] . WHITE . " / " . YELLOW . $GLOBALS['shortlink_totalclaims'] . WHITE . ' ] ' . '| ' . WHITE . $redirect . ' | ' . GREEN . $msg . RESET . "\n";
+            return;
         }
     }
+}
 }
 
 

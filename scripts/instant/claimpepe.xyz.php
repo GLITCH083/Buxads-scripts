@@ -264,15 +264,13 @@ function login($email, $password = '', $proxy) {
 
 function faucet($email, $proxy) {
   
-    
-    while (true) {
+        $coins = ['ltc','usdt','dgb','sol','fey','pepe','doge'];
+        foreach($coins as $coin){
+        while (true) {
         
-        $r = Run("https://claimpepe.xyz/faucet/doge",headers(),null,null,$proxy,0,$email);
+            $r = Run("https://claimpepe.xyz/faucet/$coin",headers(),null,null,$proxy,0,$email);
 
-        if ($r['info']['redirect_url']) {
-            shortlink($email, $proxy);
-            continue;
-        }
+            if ($r['info']['redirect_url']) {shortlink($email, $proxy,$coin);continue;}
         
         if ($r['info']['http_code'] == 200) {
             $body = $r['body'];
@@ -287,69 +285,57 @@ function faucet($email, $proxy) {
                 $timer = intval($m[1]);
             }
             
-            if ($timer) {
-                countdown($timer,"⏳ Waiting ");
-                continue;
-            }
+            if ($timer) {countdown($timer,"⏳ Waiting ");continue;}
             
             // Extract form tokens
-            $csrf = explode('"', explode('<input type="hidden" name="ci_csrf_token" id="token" value="', $body)[1])[0];
-            $token = explode('"', explode('<input type="hidden" name="token" value="', $body)[1])[0];
-            $cur = explode('"', explode('<input type="hidden" name="currency" value="', $body)[1])[0];
-            $rscaptcha_token = explode('"', explode('<input type="hidden" name="rscaptcha_token" value="', $body)[1])[0];
-            $captcha = rs_upsidedown($body, "https://rscaptcha.com/assets/generated_captcha/");
+                $csrf = explode('"', explode('<input type="hidden" name="ci_csrf_token" id="token" value="', $body)[1])[0];
+                $token = explode('"', explode('<input type="hidden" name="token" value="', $body)[1])[0];
+                $cur = explode('"', explode('<input type="hidden" name="currency" value="', $body)[1])[0];
+                $rscaptcha_token = explode('"', explode('<input type="hidden" name="rscaptcha_token" value="', $body)[1])[0];
+                $captcha = rs_upsidedown($body, "https://rscaptcha.com/assets/generated_captcha/");
             
-            if (!$captcha['rs-response']) {
-                continue;
-            }
+                if (!$captcha['rs-response']) {continue;}
+                $ipData = json_decode(Run("http://ip-api.com/json/?fields=query,timezone", [], null, "data", $proxy, 2, $email)['body'] ?? '{}', true);
+                $ip = $ipData['query'] ?? '';
+                $timezone = $ipData['timezone'] ?? '';
+                $ls = 'en-US,en';
+                $userAgent = SaveData(APP_HOST, 'UserAgent');
+                $utt = $timezone;
+                $uf = md5($ip . $userAgent . $ls . $utt);
             
-            // Prepare payload
-            $ipData = json_decode(Run("http://ip-api.com/json/?fields=query,timezone", [], null, "data", $proxy, 2, $email)['body'] ?? '{}', true);
-            $ip = $ipData['query'] ?? '';
-            $timezone = $ipData['timezone'] ?? '';
-            $ls = 'en-US,en';
-            $userAgent = SaveData(APP_HOST, 'UserAgent');
-            $utt = $timezone;
-            $uf = md5($ip . $userAgent . $ls . $utt);
+                $payload = http_build_query(["ci_csrf_token" => $csrf,"token" => $token,"currency" => $cur,"captcha" => "rscaptcha","rscaptcha_token" => $rscaptcha_token,"rscaptcha_response" => $captcha['rs-response'],"uf" => $uf,"utt" => $utt,"ls" => $ls]);
             
-            $payload = http_build_query([
-                "ci_csrf_token" => $csrf,
-                "token" => $token,
-                "currency" => $cur,
-                "captcha" => "rscaptcha",
-                "rscaptcha_token" => $rscaptcha_token,
-                "rscaptcha_response" => $captcha['rs-response'],
-                "uf" => $uf,
-                "utt" => $utt,
-                "ls" => $ls
-            ]);
+                $r = Run("https://claimpepe.xyz/faucet/verify",headerss(),$payload,null,$proxy,0,$email);
             
-            $r = Run("https://claimpepe.xyz/faucet/verify",headerss(),$payload,null,$proxy,0,$email);
-            
-            $r = Run("https://claimpepe.xyz/faucet/doge",headers(),null,null,$proxy,0,$email);
+                $r = Run("https://claimpepe.xyz/faucet/$coin",headers(),null,null,$proxy,0,$email);
         
-            $msg = explode("',", explode("text: '", $r['body'])[1])[0] ?? '';
+                $msg = explode("',", explode("text: '", $r['body'])[1])[0] ?? '';
+
+                if($msg == "The faucet does not have sufficient funds for this transaction."){
+                    break;
+                }
             
-            $GLOBALS['faucet_totalclaims']++;
-            if ($msg) {
-                $GLOBALS['failed'] = 0;
-                $claimCount++;
-                $GLOBALS['faucet_claims']++;
-                echo WHITE . '[ ' . GREEN . $GLOBALS['faucet_claims'] . WHITE . " / " . YELLOW . $GLOBALS['faucet_totalclaims'] . WHITE . ' ] ' . GREEN . $msg . WHITE . " | " . YELLOW . get_balance() . RESET .  "\n";
-                sleep(5);
-            }else{
+                $GLOBALS['faucet_totalclaims']++;
+                if ($msg) {
+                    $GLOBALS['failed'] = 0;
+                    $claimCount++;
+                    $GLOBALS['faucet_claims']++;
+                    echo WHITE . '[ ' . GREEN . $GLOBALS['faucet_claims'] . WHITE . " / " . YELLOW . $GLOBALS['faucet_totalclaims'] . WHITE . ' ] ' . GREEN . $msg . WHITE . " | " . YELLOW . get_balance() . RESET .  "\n";
+                    sleep(5);
+                }else{
                 $GLOBALS['failed']++;
-            if($GLOBALS['failed'] == 3){
-                exit("3 Incorrect Claims\n");
-            }
+                if($GLOBALS['failed'] == 3){
+                    exit("3 Incorrect Claims\n");
+                    }
+                }
             }
         }
     }
 }
 
-function shortlink($email, $proxy) {
+function shortlink($email, $proxy,$coin) {
     while (true) {
-        $r = Run("https://claimpepe.xyz/links/doge",headers(),null,null,$proxy,0,$email);
+        $r = Run("https://claimpepe.xyz/links/$coin",headers(),null,null,$proxy,0,$email);
 
         preg_match_all('/<h5>(.*?)<\/h5>/', $r['body'], $names);
         preg_match_all('/<\/i>\s*(\d+)\/\d+\s*<\/div>/', $r['body'], $claims);

@@ -37,6 +37,8 @@ if (!defined("api_endpoint")) define("api_endpoint", "http://37.60.224.60:7860/a
 
 $GLOBALS['faucet_claims'] = 0;
 $GLOBALS['faucet_totalclaims'] = 0;
+$GLOBALS['ptc_claims'] = 0;
+$GLOBALS['ptc_totalclaims'] = 0;
 $GLOBALS['shortlink_claims'] = 0;
 $GLOBALS['shortlink_totalclaims'] = 0;
 $GLOBALS['failed'] = 0;
@@ -262,6 +264,8 @@ function faucet($email, $proxy = null){
                 $timer = explode('"',explode(' data-cooldown="', $r['body'])[1])[0];
                 $timer = intval($timer);
                 if($timer > 0){
+                    MakeyouTaskWatch($email,$proxy);
+                    ptc($email,$proxy);
                     countdown($timer, "⏳ Waiting");
                     continue;
                 }
@@ -332,6 +336,307 @@ function faucet($email, $proxy = null){
             sleep(5);
         }
     }
+}
+
+function ptc($email, $proxy = null){
+    $base    = 'https://adcoins.cc';
+    $apiUrl  = $base . '/api.php';
+    $siteKey = '0x4AAAAAACyaNDdvQo-05xXY';   // Turnstile sitekey
+    $pageUrl = $base . '/ptc';               // pageurl passed to solver
+
+    // ── 1. Fetch PTC listing ─────────────────────────────────────────
+    $r = Run($pageUrl, headers(), null, null, $proxy, 2, $email);
+    if (empty($r['body'])) {
+        echo "[$email] ❌ empty ptc body\n";
+        return false;
+    }
+
+    $done = 0;
+
+    // ── 2. IFRAME ads ────────────────────────────────────────────────
+    // Pattern: <h3>Title</h3> ... <a href="/ptc_ad/ID">
+    preg_match_all(
+        '/<h3[^>]*>([^<]+)<\/h3>.*?<a\s+href="(\/ptc_ad\/(\d+))"/is',
+        $r['body'],
+        $iframes,
+        PREG_SET_ORDER
+    );
+
+    foreach ($iframes as $row) {
+        $title = trim($row[1]);
+        $path  = $row[2];          // /ptc_ad/472
+        $adId  = (int) $row[3];
+
+        // 2a. Visit the viewing page — view_id/duration/ad_url live in its JS
+        $viewResp = Run($base . $path, headers(), null, null, $proxy, 2, $email);
+        $viewBody = $viewResp['body'] ?? '';
+
+        preg_match('/var\s+viewId\s*=\s*(\d+)/',                 $viewBody, $vm);
+        preg_match('/var\s+totalDuration\s*=\s*(\d+)/',           $viewBody, $dm);
+        preg_match('/var\s+adUrl\s*=\s*[\'"]([^\'"]+)[\'"]/',     $viewBody, $um);
+
+        $viewId   = $vm[1] ?? null;
+        $duration = (int) ($dm[1] ?? 7);
+        $adUrl    = $um[1] ?? null;
+
+        if (!$viewId) {
+            continue;
+        }
+
+        // 2b. Hit the ad URL (simulates iframe load)
+        if ($adUrl) {
+            Run($adUrl, headers(), null, null, $proxy, 2, $email);
+        }
+
+        // 2c. Wait the required duration
+        countdown($duration, "");
+
+        // 2d. Solve Turnstile (sitekey is on the page)
+        $cap = captcha($pageUrl, $siteKey, 'turnstile')['token'] ?? null;
+        if (empty($cap)) {
+            continue;
+        }
+
+        // 2e. Claim
+        $claim = Run(
+            $apiUrl,
+            headers(['Content-Type' => 'application/x-www-form-urlencoded']),
+            http_build_query([
+                'action'          => 'claim_ptc_view',
+                'view_id'         => $viewId,
+                'turnstile_token' => $cap,
+            ]),
+            null, $proxy, 2, $email
+        );
+
+        $cj = json_decode($claim['body'] ?? '', true);
+        $GLOBALS['ptc_totalclaims']++;
+        if (!empty($cj['success'])) {
+            $GLOBALS['ptc_claims']++;
+            $balance = get_balance($email, $proxy);
+            echo WHITE . '[ ' . GREEN . $GLOBALS['ptc_claims'] . WHITE . " / " . YELLOW . $GLOBALS['ptc_totalclaims'] . WHITE . ' ] ' . 
+                 GREEN . "✅ IFRAME ad $adId credited (+" . ($cj['reward'] ?? '15') . ") " .
+                RESET . " | Api Balance: " . YELLOW . $balance . " Token" . RESET . "\n";
+                  $done++;
+        }
+
+        usleep(500000);
+    }
+
+    // ── 3. WINDOW ads ────────────────────────────────────────────────
+    preg_match_all(
+        '/<button[^>]*data-window-ad="(\d+)"[^>]*'
+        . 'data-title="([^"]*)"[^>]*'
+        . 'data-url="([^"]*)"[^>]*'
+        . 'data-duration="(\d+)"/is',
+        $r['body'],
+        $windows,
+        PREG_SET_ORDER
+    );
+
+    foreach ($windows as $row) {
+        $adId     = (int) $row[1];
+        $title    = html_entity_decode($row[2], ENT_QUOTES | ENT_HTML5);
+        $adUrl    = html_entity_decode($row[3], ENT_QUOTES | ENT_HTML5);
+        $duration = (int) $row[4];
+
+        // 3a. Create the view → returns view_id + ad_url
+        $create = Run(
+            $apiUrl,
+            headers(['Content-Type' => 'application/x-www-form-urlencoded']),
+            http_build_query([
+                'action' => 'create_ptc_view',
+                'ad_id'  => $adId,
+            ]),
+            null, $proxy, 2, $email
+        );
+
+        $cjson = json_decode($create['body'] ?? '', true);
+
+        if (empty($cjson['success'])) {
+            continue;
+        }
+
+        $viewId = $cjson['view_id'];
+        $adUrl  = $cjson['ad_url'] ?? $adUrl;
+
+
+        countdown($duration, "");
+
+        // 3d. Solve Turnstile
+        $cap = captcha($pageUrl, $siteKey, 'turnstile')['token'] ?? null;
+        if (empty($cap)) {
+            continue;
+        }
+
+        // 3e. Claim
+        $claim = Run(
+            $apiUrl,
+            headers(['Content-Type' => 'application/x-www-form-urlencoded']),
+            http_build_query([
+                'action'          => 'claim_ptc_view',
+                'view_id'         => $viewId,
+                'turnstile_token' => $cap,
+            ]),
+            null, $proxy, 2, $email
+        );
+
+        $GLOBALS['ptc_totalclaims']++;
+        $cj = json_decode($claim['body'] ?? '', true);
+        if (!empty($cj['success'])) {
+            $GLOBALS['ptc_claims']++;
+            $balance = get_balance($email, $proxy);
+            echo WHITE . '[ ' . GREEN . $GLOBALS['ptc_claims'] . WHITE . " / " . YELLOW . $GLOBALS['ptc_totalclaims'] . WHITE . ' ] ' . 
+                 GREEN . "✅ WINDOW ad $adId credited (+" . ($cj['reward'] ?? '15') . ") " .
+                RESET . " | Api Balance: " . YELLOW . $balance . " Token" . RESET . "\n";
+                  $done++;
+            
+        }
+
+        usleep(500000);
+    }
+    return $done;
+}
+
+
+function MakeyouTaskWatch($email, $proxy = null){
+    $html = Run("https://adcoins.cc/watch-earn", headers(), null, null, $proxy, 2, $email);
+
+    if (empty($html['body'])) {
+        echo "[$email] ❌ empty watch-earn body\n";
+        return false;
+    }
+
+    // 1. Find watch_ptc links
+    preg_match_all(
+        '/href\s*=\s*["\'](https?:\/\/makeyoutask\.com\/wall\/watch_ptc\/\d+\?[^"\']+)["\']/i',
+        $html['body'],
+        $m
+    );
+
+    $urls = array_values(array_unique(array_map(
+        fn($u) => html_entity_decode($u, ENT_QUOTES | ENT_HTML5),
+        $m[1] ?? []
+    )));
+
+    if (empty($urls)) {
+        echo "[$email] ❌ no watch_ptc links found\n";
+        return false;
+    }
+
+    $done = 0;
+
+    foreach ($urls as $url) {
+        // 2. Hit watch_ptc page → capture redirect to the video page
+        $step1    = Run($url, headers(), null, null, $proxy, 2, $email);
+        $redirect = $step1['info']['redirect_url'] ?? null;
+
+        if (!$redirect) {
+            echo "[$email] ❌ no redirect for $url\n";
+            continue;
+        }
+
+        // 3. Follow redirect so the video page is loaded (sets session/cookies if needed)
+        Run($redirect, headers(), null, null, $proxy, 2, $email);
+
+        // 4. Parse the video URL query string safely
+        $parts = parse_url($redirect);
+        $query = [];
+        if (!empty($parts['query'])) {
+            parse_str($parts['query'], $query);
+        }
+
+        $videoId = $query['video_id']              ?? null;
+        $timer   = (int) ($query['timer']          ?? 0);
+        $taskId  = (int) ($query['task_id']        ?? 0);
+        $userId  = (int) ($query['partner_user_id']?? 0);
+        $token   = $query['token']                 ?? null;
+        $backend = $query['backend']               ?? null;
+        $sitekey = $query['turnstile_site_key']    ?? null;
+
+        if (!$videoId || !$token || !$backend || !$taskId || !$userId) {
+            echo "[$email] ❌ missing params in redirect: " . json_encode($query) . "\n";
+            continue;
+        }
+
+        // 5. Strip trailing slashes from backend (JS does this too)
+        $backend = rtrim($backend, '/');
+
+        // 6. POST #1 — start the watch session
+        $startResp = Run(
+            $backend . '/publisher/start_ptc_external',
+            headers(['Content-Type: application/x-www-form-urlencoded']),
+            http_build_query([
+                'partner_user' => $userId,
+                'token'        => $token,
+            ]),
+            null, $proxy, 2, $email
+        );
+
+        $startJson = json_decode($startResp['body'] ?? '', true);
+
+        if (($startJson['status'] ?? '') !== 'success') {
+            echo "[$email] ❌ start failed for task $taskId: "
+               . ($startJson['message'] ?? 'unknown error') . "\n";
+            continue;
+        }
+
+        // 7. Wait (backend retry_after overrides URL timer)
+        $wait = (int) ($startJson['retry_after'] ?? $timer);
+        if ($wait > 0) {
+            countdown($wait, "");
+        }
+
+        // 8. Build payload — solve Turnstile only if required
+        $commonFields = [
+            'task_id'      => $taskId,
+            'partner_user' => $userId,
+            'token'        => $token,
+        ];
+
+        if (empty($sitekey)) {
+            $payload = http_build_query($commonFields);
+        } else {
+            $capResp = captcha($redirect, $sitekey, 'turnstile','ptc_complete');
+            $cap     = $capResp['token'] ?? null;
+
+            if (empty($cap)) {
+                echo "[$email] ⚠ captcha failed for task $taskId — skipping\n";
+                continue;
+            }
+
+            $payload = http_build_query($commonFields + [
+                'cf-turnstile-response' => $cap,
+            ]);
+        }
+
+        // 9. POST #2 — complete & claim reward
+        $doneResp = Run(
+            $backend . '/publisher/complete_ptc_external',
+            headers(['Content-Type: application/x-www-form-urlencoded']),
+            $payload,
+            null, $proxy, 2, $email
+        );
+
+        $doneJson = json_decode($doneResp['body'] ?? '', true);
+        $GLOBALS['ptc_totalclaims']++;
+        if (($doneJson['status'] ?? '') === 'success') {
+            $GLOBALS['ptc_claims']++;
+            
+                $balance = get_balance($email, $proxy);
+                echo WHITE . '[ ' . GREEN . $GLOBALS['ptc_claims'] . WHITE . " / " . YELLOW . $GLOBALS['ptc_totalclaims'] . WHITE . ' ] ' . 
+                     GREEN . "✅ task $taskId credited (+{$doneJson['reward']} {$doneJson['unit']}) " .
+                    RESET . " | Api Balance: " . YELLOW . $balance . " Token" . RESET . "\n";
+            $done++;
+        } else {
+            echo "[$email] ❌ complete failed for task $taskId: "
+               . ($doneJson['message'] ?? 'unknown error') . "\n";
+        }
+
+        usleep(500000); // 0.5s between tasks
+    }
+
+    return $done;
 }
 
 function runAccount($account) {

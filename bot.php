@@ -1,10 +1,10 @@
 #!/usr/bin/env php
 <?php
 /**
- * 🤖 Bot Launcher - Script Manager with subfolder sync & cleanup
+ * 🤖 Bot Launcher - Script Manager
  * 
  * @author GLITCH083
- * @version v2.1
+ * @version v2.0
  */
 
 // Suppress all errors
@@ -38,7 +38,6 @@ define("GITHUB_BRANCH", "main");
 define("GITHUB_API_URL", "https://api.github.com/repos/" . GITHUB_USERNAME . "/" . GITHUB_REPO);
 define("VERSION_FILE", "version.json");
 define("TEMP_DIR", BASE_DIR . "/temp_update");
-define("MANIFEST_FILE", BASE_DIR . "/synced_manifest.json");
 define("APP_HOST", "buxads-Bot");
 define("api_endpoint", "http://37.60.224.60:7860/api");
 
@@ -49,11 +48,9 @@ if (!defined("anticaptcha_key")) {
 }
 
 // ============================================
-// GITHUB API FUNCTIONS (with encoding fix)
+// GITHUB API FUNCTIONS
 // ============================================
 function githubApiRequest($endpoint) {
-    // Encode spaces in the endpoint (GitHub API requires %20)
-    $endpoint = str_replace(' ', '%20', $endpoint);
     $url = GITHUB_API_URL . $endpoint;
     
     $ch = curl_init();
@@ -89,8 +86,8 @@ function githubDownloadFile($path) {
         return base64_decode($data['content']);
     }
     
-    // Fallback to raw URL (also encode spaces)
-    $rawUrl = "https://raw.githubusercontent.com/" . GITHUB_USERNAME . "/" . GITHUB_REPO . "/" . GITHUB_BRANCH . "/" . str_replace(' ', '%20', $path);
+    // Fallback to raw URL
+    $rawUrl = "https://raw.githubusercontent.com/" . GITHUB_USERNAME . "/" . GITHUB_REPO . "/" . GITHUB_BRANCH . "/" . $path;
     
     $ch = curl_init();
     curl_setopt_array($ch, [
@@ -117,38 +114,23 @@ function githubDownloadFile($path) {
 }
 
 /**
- * Recursively get all PHP files from a given path in the repo
+ * NEW: Fetch the full recursive file tree from GitHub.
+ * Returns an array of relative paths (e.g. "scripts/faucet/auto.php").
  */
-function githubGetAllFiles($path = 'scripts') {
-    $data = githubApiRequest("/contents/" . $path);
-    if (!$data || !is_array($data)) return [];
+function githubGetTree() {
+    $data = githubApiRequest("/git/trees/" . GITHUB_BRANCH . "?recursive=1");
     
-    $files = [];
-    foreach ($data as $item) {
-        if ($item['type'] === 'file' && pathinfo($item['name'], PATHINFO_EXTENSION) === 'php') {
-            $files[] = $item['path']; // e.g., "scripts/apikey/foo.php" or "scripts/telegram bots/bot.php"
-        } elseif ($item['type'] === 'dir') {
-            $subFiles = githubGetAllFiles($item['path']); // pass the full path (with spaces)
-            $files = array_merge($files, $subFiles);
+    if ($data && isset($data['tree']) && is_array($data['tree'])) {
+        $files = [];
+        foreach ($data['tree'] as $item) {
+            if (isset($item['type'], $item['path']) && $item['type'] === 'blob') {
+                $files[] = $item['path'];
+            }
         }
+        return $files;
     }
-    return $files;
-}
-
-// ============================================
-// MANIFEST FUNCTIONS
-// ============================================
-function getSyncedManifest() {
-    if (file_exists(MANIFEST_FILE)) {
-        $content = file_get_contents(MANIFEST_FILE);
-        $data = json_decode($content, true);
-        if (is_array($data)) return $data;
-    }
+    
     return [];
-}
-
-function saveSyncedManifest($files) {
-    file_put_contents(MANIFEST_FILE, json_encode($files, JSON_PRETTY_PRINT));
 }
 
 // ============================================
@@ -190,6 +172,7 @@ function isNewerVersion($current, $latest) {
     return version_compare($latest['version'], $current['version'], '>');
 }
 
+// Cache update status for the session
 $updateStatus = null;
 
 function checkUpdateStatus() {
@@ -221,7 +204,7 @@ function checkUpdateStatus() {
 }
 
 // ============================================
-// UPDATE FUNCTIONS (with subfolder support & cleanup)
+// UPDATE FUNCTIONS
 // ============================================
 function displayUpdateInfo($current, $latest) {
     echo "\n";
@@ -244,35 +227,156 @@ function displayUpdateInfo($current, $latest) {
     echo "\n";
 }
 
-function applyUpdate($latest) {
-    echo "\n" . YELLOW . "📥 Fetching remote file list..." . RESET . "\n";
+/**
+ * NEW: Recursively delete a directory.
+ */
+function deleteDirectory($dir) {
+    if (!is_dir($dir)) return;
     
-    // 1. Get list of all remote PHP files under scripts/ (recursive)
-    $remoteFiles = githubGetAllFiles('scripts');
+    $items = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($dir, RecursiveDirectoryIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::CHILD_FIRST
+    );
+    
+    foreach ($items as $item) {
+        if ($item->isDir()) {
+            @rmdir($item->getPathname());
+        } else {
+            @unlink($item->getPathname());
+        }
+    }
+    
+    @rmdir($dir);
+}
+
+/**
+ * NEW: Remove empty subdirectories inside $dir.
+ */
+function removeEmptyDirs($dir) {
+    if (!is_dir($dir)) return;
+    
+    $items = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($dir, RecursiveDirectoryIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::CHILD_FIRST
+    );
+    
+    foreach ($items as $item) {
+        if ($item->isDir()) {
+            $path = $item->getPathname();
+            if (count(scandir($path)) <= 2) {
+                @rmdir($path);
+            }
+        }
+    }
+}
+
+/**
+ * NEW: Delete local files that no longer exist on GitHub.
+ * Scans: BASE_DIR/functions/*, BASE_DIR/scripts/**\/*, and root managed files.
+ * Returns number of deleted files.
+ */
+function cleanupOrphanedFiles($remoteFiles) {
+    // Quick lookup set (normalized with forward slashes)
+    $remoteSet = array_flip($remoteFiles);
+    
+    $deleted = 0;
+    
+    // ---- 1. Root managed files ----
+    $rootManaged = ['bot.php', VERSION_FILE];
+    foreach ($rootManaged as $file) {
+        if (!isset($remoteSet[$file]) && file_exists(BASE_DIR . "/" . $file)) {
+            @unlink(BASE_DIR . "/" . $file);
+            echo "  🗑️  Deleted: " . $file . "\n";
+            $deleted++;
+        }
+    }
+    
+    // ---- 2. Recursive scan of managed directories ----
+    $scanDirs = ['functions', 'scripts'];
+    foreach ($scanDirs as $dir) {
+        $fullDir = BASE_DIR . "/" . $dir;
+        if (!is_dir($fullDir)) continue;
+        
+        $items = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($fullDir, RecursiveDirectoryIterator::SKIP_DOTS),
+            RecursiveIteratorIterator::CHILD_FIRST
+        );
+        
+        foreach ($items as $item) {
+            if (!$item->isFile()) continue;
+            
+            // Build relative path (with forward slashes)
+            $rel = substr($item->getPathname(), strlen(BASE_DIR) + 1);
+            $rel = str_replace('\\', '/', $rel);
+            
+            // Skip backup files and dot files we don't manage
+            if (preg_match('/\.(bak|tmp|log)$/i', $rel)) continue;
+            
+            if (!isset($remoteSet[$rel])) {
+                @unlink($item->getPathname());
+                echo "  🗑️  Deleted: " . $rel . "\n";
+                $deleted++;
+            }
+        }
+        
+        // Clean up empty folders
+        removeEmptyDirs($fullDir);
+    }
+    
+    return $deleted;
+}
+
+/**
+ * UPDATED: Download files preserving directory structure,
+ * then apply them and clean up orphaned files.
+ */
+function applyUpdate($latest) {
+    echo "\n" . YELLOW . "📥 Fetching repository file list..." . RESET . "\n";
+    
+    // 1. Get full recursive tree from GitHub
+    $remoteFiles = githubGetTree();
+    
     if (empty($remoteFiles)) {
-        echo RED . "✗ Could not fetch remote file list. Update aborted.\n" . RESET;
+        echo RED . "✗ Could not fetch repository tree from GitHub." . RESET . "\n";
+        echo YELLOW . "  Check internet connection / token permissions." . RESET . "\n";
         return false;
     }
-    echo GREEN . "✓ Found " . count($remoteFiles) . " remote scripts.\n" . RESET;
     
-    // 2. Create temp directory
-    if (!is_dir(TEMP_DIR)) {
-        mkdir(TEMP_DIR, 0777, true);
+    // 2. Filter to only managed file types
+    $managedExt = ['php', 'json'];
+    $remoteFiles = array_values(array_filter($remoteFiles, function ($path) use ($managedExt) {
+        // Skip hidden folders (.git, .github, etc.)
+        if (strpos($path, '.') === 0) return false;
+        if (strpos($path, '.github/') === 0) return false;
+        
+        $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        return in_array($ext, $managedExt);
+    }));
+    
+    if (empty($remoteFiles)) {
+        echo RED . "✗ No managed files found in repo." . RESET . "\n";
+        return false;
     }
     
-    // 3. Download each remote file
-    echo "\n" . YELLOW . "📥 Downloading updates..." . RESET . "\n";
+    echo GREY . "  Found " . count($remoteFiles) . " file(s) on GitHub" . RESET . "\n\n";
+    
+    // 3. Prepare temp dir
+    if (is_dir(TEMP_DIR)) deleteDirectory(TEMP_DIR);
+    mkdir(TEMP_DIR, 0777, true);
+    
+    // 4. Download every file (preserving folder structure)
     $downloaded = 0;
     $total = count($remoteFiles);
     
-    foreach ($remoteFiles as $remotePath) {
-        // e.g., "scripts/apikey/foo.php" or "scripts/telegram bots/bot.php"
-        echo "  Downloading: " . $remotePath . " ... ";
+    foreach ($remoteFiles as $file) {
+        echo "  Downloading: " . $file . " ... ";
         
-        $content = githubDownloadFile($remotePath);
+        $content = githubDownloadFile($file);
         if ($content !== false) {
-            // Flatten path for temp storage (replace slashes and spaces? we keep as is)
-            $tempFile = TEMP_DIR . "/" . str_replace('/', '_', $remotePath);
+            $tempFile = TEMP_DIR . "/" . $file;
+            $dir = dirname($tempFile);
+            if (!is_dir($dir)) mkdir($dir, 0777, true);
+            
             file_put_contents($tempFile, $content);
             $downloaded++;
             echo GREEN . "✓" . RESET . "\n";
@@ -284,84 +388,50 @@ function applyUpdate($latest) {
     echo "\n" . GREEN . "✓ Downloaded " . $downloaded . "/" . $total . " files" . RESET . "\n";
     
     if ($downloaded == 0) {
-        echo RED . "✗ No files downloaded. Update failed.\n" . RESET;
+        echo RED . "✗ No files downloaded. Update failed." . RESET . "\n";
+        deleteDirectory(TEMP_DIR);
         return false;
     }
     
-    // 4. Move files to their correct locations (relative to BASE_DIR)
-    echo "\n" . YELLOW . "🔄 Installing files..." . RESET . "\n";
-    $installed = [];
-    foreach ($remoteFiles as $remotePath) {
-        $tempFile = TEMP_DIR . "/" . str_replace('/', '_', $remotePath);
+    // 5. Backup current bot.php
+    if (file_exists(BASE_DIR . "/bot.php")) {
+        copy(BASE_DIR . "/bot.php", BASE_DIR . "/bot.php.bak");
+        echo "  ✓ Created backup: bot.php.bak\n";
+    }
+    
+    // 6. Apply files
+    echo "\n" . YELLOW . "🔄 Applying update..." . RESET . "\n";
+    
+    $applied = 0;
+    foreach ($remoteFiles as $file) {
+        $tempFile = TEMP_DIR . "/" . $file;
         if (!file_exists($tempFile)) continue;
         
-        $targetFile = BASE_DIR . "/" . $remotePath;
-        $targetDir = dirname($targetFile);
-        if (!is_dir($targetDir)) {
-            mkdir($targetDir, 0777, true);
-        }
-        if (rename($tempFile, $targetFile)) {
-            echo "  ✓ Installed: " . $remotePath . "\n";
-            $installed[] = $remotePath;
-        } else {
-            echo "  ✗ Failed: " . $remotePath . "\n";
+        $dest = BASE_DIR . "/" . $file;
+        $dir = dirname($dest);
+        if (!is_dir($dir)) mkdir($dir, 0777, true);
+        
+        if (rename($tempFile, $dest)) {
+            echo "  ✓ Updated: " . $file . "\n";
+            $applied++;
         }
     }
     
-    // 5. Delete files that are in manifest but no longer in remote list
-    $manifest = getSyncedManifest();
-    $toDelete = array_diff($manifest, $remoteFiles);
-    if (!empty($toDelete)) {
-        echo "\n" . YELLOW . "🧹 Removing obsolete scripts (removed from GitHub)..." . RESET . "\n";
-        foreach ($toDelete as $path) {
-            $localFile = BASE_DIR . "/" . $path;
-            if (file_exists($localFile)) {
-                if (unlink($localFile)) {
-                    echo "  ✓ Deleted: " . $path . "\n";
-                } else {
-                    echo "  ✗ Could not delete: " . $path . "\n";
-                }
-            } else {
-                echo "  ⚠️  Already missing: " . $path . "\n";
-            }
-        }
+    // 7. Delete orphaned files
+    echo "\n" . YELLOW . "🗑️  Removing obsolete files..." . RESET . "\n";
+    $deleted = cleanupOrphanedFiles($remoteFiles);
+    
+    if ($deleted > 0) {
+        echo GREEN . "  ✓ Removed " . $deleted . " obsolete file(s)" . RESET . "\n";
+    } else {
+        echo GREY . "  ✓ No obsolete files found" . RESET . "\n";
     }
     
-    // 6. Update manifest to match remote list
-    saveSyncedManifest($remoteFiles);
-    echo GREEN . "✓ Manifest updated.\n" . RESET;
+    // 8. Clean up temp directory
+    deleteDirectory(TEMP_DIR);
     
-    // 7. Cleanup temp dir
-    $files = glob(TEMP_DIR . "/*");
-    foreach ($files as $file) {
-        if (is_file($file)) unlink($file);
-    }
-    @rmdir(TEMP_DIR);
-    
-    // 8. Also update core files (bot.php, version.json, functions/)
-    echo "\n" . YELLOW . "🔄 Updating core files..." . RESET . "\n";
-    $coreFiles = [
-        'bot.php',
-        'version.json',
-        'functions/function.php',
-        'functions/captcha.php'
-    ];
-    foreach ($coreFiles as $file) {
-        echo "  Downloading: " . $file . " ... ";
-        $content = githubDownloadFile($file);
-        if ($content !== false) {
-            $target = BASE_DIR . "/" . $file;
-            $dir = dirname($target);
-            if (!is_dir($dir)) mkdir($dir, 0777, true);
-            file_put_contents($target, $content);
-            echo GREEN . "✓" . RESET . "\n";
-        } else {
-            echo RED . "✗" . RESET . "\n";
-        }
-    }
-    
-    echo "\n" . GREEN . "✅ Update applied successfully!\n" . RESET;
-    echo YELLOW . "⚠️  Please restart the bot to load the new version.\n" . RESET;
+    echo "\n" . GREEN . "✅ Update applied successfully!" . RESET . "\n";
+    echo GREY . "   Applied: " . $applied . " file(s), Deleted: " . $deleted . " file(s)\n" . RESET;
     return true;
 }
 
@@ -406,7 +476,7 @@ function checkForUpdates() {
 }
 
 // ============================================
-// SCRIPT MANAGEMENT FUNCTIONS (unchanged)
+// SCRIPT MANAGEMENT FUNCTIONS
 // ============================================
 function getScripts() {
     $scripts = [];
@@ -471,13 +541,16 @@ function getScriptDescription($filename) {
 function getScriptVersion($filePath) {
     if (file_exists($filePath)) {
         $content = file_get_contents($filePath);
+        
         if (preg_match('/@version\s+([^\n]+)/i', $content, $matches)) {
             return trim($matches[1]);
         }
+        
         if (preg_match('/v(?:ersion)?\s*([0-9.]+)/i', $content, $matches)) {
             return 'v' . $matches[1];
         }
     }
+    
     return 'v1.0';
 }
 
@@ -641,7 +714,6 @@ if (php_sapi_name() !== 'cli') {
     die("This script must be run from the command line!\n");
 }
 
-// Handle Ctrl+C
 if (function_exists('pcntl_signal')) {
     pcntl_signal(SIGINT, function() {
         echo "\n" . YELLOW . "Interrupted by user. Exiting...\n" . RESET;
@@ -649,12 +721,10 @@ if (function_exists('pcntl_signal')) {
     });
 }
 
-// Ensure scripts directory exists
 if (!is_dir(SCRIPTS_DIR)) {
     mkdir(SCRIPTS_DIR, 0777, true);
 }
 
-// Main loop
 while (true) {
     $scripts = getScripts();
     displayMainMenu();

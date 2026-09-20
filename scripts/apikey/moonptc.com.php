@@ -244,21 +244,21 @@ function faucet($email,$proxy){
             continue;
         }
 
-        $payload = " ";
-        $r = Run("https://moonptc.com/api/faucet/ac-captcha/challenge", headerss(), $payload, null, $proxy, 2, $email);
+        $payload = json_encode([]);
+        $r = Run("https://moonptc.com/api/faucet/rotation-captcha/challenge", headerss(), $payload, null, $proxy, 2, $email);
         $r = json_decode($r['body'],true);
 
         $session_id = $r['session_id'];
         $id = $r['challenge']['id'];
-        $challenge = $r['challenge']['image'];
+        $image = base64_encode(Run("https://moonptc.com/captcha/moon-base.webp",headers(),null,null,$proxy,2,$email)['body']);
+        $piece = base64_encode(Run("https://moonptc.com" . $r['challenge']['image'],headers(),null,null,$proxy,2,$email)['body']);
+        $crop = $r['challenge']['crop'];
         
-        $image = explode(',', $challenge)[1];
+        $verify_payload = rotation($image,$piece,$crop);
         
-        $verify_payload = motion($image);
-
-        $verify_payload = json_encode(["session_id" => $session_id,"candidate_index" => $verify_payload['index']]);
+        $verify_payload = json_encode(["session_id" => $session_id,"angle" => (int)$verify_payload['token']]);
         
-        $r = Run("https://moonptc.com/api/faucet/ac-captcha/verify", headerss(), $verify_payload, null, $proxy, 2, $email);
+        $r = Run("https://moonptc.com/api/faucet/rotation-captcha/verify", headerss(), $verify_payload, null, $proxy, 2, $email);
 
         $js = json_decode($r['body'], true);
 

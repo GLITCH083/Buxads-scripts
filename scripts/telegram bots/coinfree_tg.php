@@ -222,6 +222,30 @@ function getFaucetSpin($initData, $deviceId, $mode, $proxy = null) {
     return json_decode($r['body'], true);
 }
 
+function getDouble($initData,$deviceId,$mode,$proxy = null){
+    $headers = getApiHeaders();
+    
+    $payload = json_encode(["action" => "request_double_reward_ad","initData" => $initData,"deviceId" => $deviceId,"mode" => $mode]);
+
+    $r = Run(API_URL, $headers, $payload, null, $proxy,2,$name);
+    $js = json_decode($r['body'], true);
+
+    if(!$js['status'] == "success") return false;
+
+    $ticket = $js['ticket'];
+
+    countdown(rand(10,20),"");
+    
+    $payload = json_encode(["action" => "complete_double_reward_ad","initData" => $initData,"deviceId" => $deviceId,"mode" => $mode,"ticket" => $ticket]);
+
+    $r = Run(API_URL, $headers, $payload, null, $proxy,2,$name);
+    $js = json_decode($r['body'], true);
+
+    if(!$js['status'] == "success") return false;
+
+    return true;
+}
+
 function claimFaucet($initData, $deviceId, $mode, $proxy = null) {
     $headers = getApiHeaders();
 
@@ -237,7 +261,7 @@ function claimFaucet($initData, $deviceId, $mode, $proxy = null) {
         return ["status" => false,"message" => "Not Able To Spin"]; // or an error message
     }
 
-    // Solve captcha
+    getDouble($initData,$deviceId,$mode,$proxy);
     $captchaData = captcha("https://coinfree.app", "0x4AAAAAAB6mAUIH75NUE5fq", "turnstile", "faucet_claim");
     $token = $captchaData['token'] ?? null;
     if (!$token) {
@@ -259,6 +283,95 @@ function claimFaucet($initData, $deviceId, $mode, $proxy = null) {
     return json_decode($r['body'], true);
 }
 
+function faucetDrip($initData, $deviceId, $proxy = null){
+    $headers = getApiHeaders();
+    
+    $payload = json_encode(["action" => "get_faucet_drip_status","initData" => $initData,"deviceId" => $deviceId]);
+
+    $r = Run(API_URL, $headers, $payload, null, $proxy,2,$name);
+    $js = json_decode($r['body'], true);
+
+    if(!$js['status'] == "success") return false;
+
+    $cooldown = $js['drip']['cooldown_remaining'];
+
+    if($cooldown){return;}
+
+    $claimToday = $js['drip']['claims_today'];
+    $claimTotal = $js['drip']['daily_limit'];
+
+    if($claimToday == $claimTotal){return;}
+
+    $duration = $js['drip']['duration_seconds'];
+
+    $payload = json_encode(["action" => "begin_faucet_drip","initData" => $initData,"deviceId" => $deviceId]);
+
+    $r = Run(API_URL, $headers, $payload, null, $proxy,2,$name);
+    $js = json_decode($r['body'], true);
+
+    if(!$js['status'] == "success") return false;
+
+    $nonce = $js['drip']['session_nonce'];
+
+    $payload = json_encode(["action" => "tap_faucet_drip","initData" => $initData,"deviceId" => $deviceId,"sessionNonce" => $nonce,"taps" => 2]);
+
+    while(true){
+
+        $r = Run(API_URL, $headers, $payload, null, $proxy,2,$name);
+        $js = json_decode($r['body'], true);
+
+        if(!$js['status'] == "success") return false;
+
+        if(empty($js['drip']['can_tap'])){
+            $duration = $js['drip']['remaining_seconds'];
+            break;
+        }
+    }
+
+    countdown($duration,"");
+    $payload = json_encode(["action" => "get_faucet_drip_status","initData" => $initData,"deviceId" => $deviceId]);
+
+    $r = Run(API_URL, $headers, $payload, null, $proxy,2,$name);
+    $js = json_decode($r['body'], true);
+
+    if(!$js['status'] == "success") return false;
+
+    if($js['drip']['state'] == "ready"){
+
+        $captchaData = captcha("https://coinfree.app", "0x4AAAAAAB6mAUIH75NUE5fq", "turnstile", "faucet_claim");
+        $token = $captchaData['token'] ?? null;
+        if (!$token) {
+            return ['status' => 'error', 'message' => 'Failed to get CAPTCHA token'];
+        }
+
+        $payload = json_encode([
+            "action" => "claim_faucet_drip",
+            "initData" => $initData,
+            "deviceId" => $deviceId,
+            "sessionNonce" => $nonce,
+            "captchaToken" => $token
+        ]);
+
+        $r = Run(API_URL, $headers, $payload, null, $proxy,2,$name);
+        $js = json_decode($r['body'], true);
+    
+        if(!$js['status'] == "success") return false;
+        $reward = $js['credited_amount'] ?? 0;
+                $GLOBALS['faucet_claims']++; // successful claim
+
+                // Update stats file
+                updateStats($accountId, 1, 1); // +1 claim, +1 total
+                $stats = loadStats($accountId);
+                $GLOBALS['faucet_claims'] = $stats['claims'];
+                $GLOBALS['faucet_totalclaims'] = $stats['totalclaims'];
+
+                $msg = "+{$reward} {$coin}";
+                // Display in the requested format
+                echo WHITE . '[ ' . GREEN . $GLOBALS['faucet_claims'] . WHITE . " / " . YELLOW . $GLOBALS['faucet_totalclaims'] . WHITE . ' ] ' . GREEN . $msg .  RESET . " | " . get_balance() . RESET . "\n";
+               
+    }
+    return;
+}
 // ---------- Main Faucet Loop (Infinite per Account) ----------
 
 function runFaucet($account) {
@@ -300,6 +413,7 @@ function runFaucet($account) {
 
         $cooldowns = [];
 
+        faucetDrip($initData, $deviceId, $proxy);
         foreach ($games as $mode) {
             $cooldown = $details['data']["faucet_cooldown_remaining_$mode"] ?? 0;
             $cooldowns[$mode] = $cooldown;

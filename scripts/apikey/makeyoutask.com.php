@@ -3,7 +3,12 @@
 date_default_timezone_set("Asia/Karachi");
 
 define("APP_HOST", "buxads-Bot");
-define("BASE_DIR", dirname(__DIR__));
+// Auto-detect project root
+$root = __DIR__;
+while ($root !== "/" && !file_exists($root . "/functions/function.php")) {
+    $root = dirname($root);
+}
+define("BASE_DIR", $root);
 
 error_reporting(0);
 
@@ -30,6 +35,8 @@ if (!defined("GREEN")) {
     define("WHITE", "\033[1;37m");
     define("RESET", "\033[0m");
 }
+
+enableCtrlC();
 
 if (!defined("anticaptcha_key")) define("anticaptcha_key", saveData(APP_HOST, "anticaptcha-apikey"));
 if (!defined("api_endpoint")) define("api_endpoint", "http://37.60.224.60:7860/api");
@@ -187,19 +194,76 @@ function selectAccount() {
     return $accounts[$choice - 1];
 }
 
+
+function runAllAccountsSmart() {
+    $accounts = loadAccounts();
+    if (empty($accounts)) {
+        echo YELLOW . "No accounts found. Add some first!\n" . RESET;
+        return;
+    }
+    echo "\n" . CYAN . "╔═══════════════════════════════════════════════════════════════╗\n" . RESET;
+    echo CYAN . "║" . WHITE . "  SMART MULTI-ACCOUNT ROTATION" . str_repeat(" ", 31) . CYAN . "║\n" . RESET;
+    echo CYAN . "╠═══════════════════════════════════════════════════════════════╣\n" . RESET;
+    echo CYAN . "║" . WHITE . "  Accounts: " . GREEN . count($accounts) . RESET . str_repeat(" ", 47 - strlen((string)count($accounts))) . CYAN . "║\n" . RESET;
+    echo CYAN . "║" . GREY . "  Faucet: <30s=5 | >=30s=1 | PTC:2 | SL:1 then next" . str_repeat(" ", 10) . CYAN . "║\n" . RESET;
+    echo CYAN . "╚═══════════════════════════════════════════════════════════════╝\n" . RESET;
+    $idx = 0;
+    $total = count($accounts);
+    while (true) {
+        $acc = $accounts[$idx % $total];
+        $email = is_array($acc) ? ($acc['email'] ?? $acc[0] ?? '') : $acc;
+        $password = is_array($acc) ? ($acc['password'] ?? $acc[1] ?? '') : '';
+        $proxy = is_array($acc) ? ($acc['proxy'] ?? $acc[2] ?? null) : null;
+        echo "\n" . PURPLE . "======== Account " . (($idx % $total)+1) . "/$total -> $email ========\n" . RESET;
+        // Reuse single-account runner if defined as runAccount / startBot etc.
+        if (function_exists('runAccount')) {
+            runAccount($acc);
+        } elseif (function_exists('login')) {
+            $ok = login($email, $password, $proxy);
+            if (!$ok) {
+                echo RED . "Login failed - next account\n" . RESET;
+                $idx++;
+                sleep(2);
+                continue;
+            }
+            echo GREEN . "Login OK - running limited claims then switch\n" . RESET;
+            // limited: user can Ctrl+C; site-specific loops stay in case 1 for deep logic
+            echo YELLOW . "Tip: for full smart faucet/PTC/SL use *pick scripts. Switching account after short cycle.\n" . RESET;
+            sleep(3);
+        } else {
+            echo YELLOW . "No runAccount/login helper - add accounts and use Single for now\n" . RESET;
+            break;
+        }
+        $idx++;
+        sleep(2);
+    }
+}
+
 function menu() {
     clear();
-    echo "\n";
+    echo "
+";
     echo CYAN . "╔═══════════════════════════════════════════════════════════════╗\n" . RESET;
-    echo CYAN . "║" . WHITE . "  🚀  makeyoutask.com AUTO BOT" . str_repeat(" ", 30) . CYAN . "║\n" . RESET;
+    echo CYAN . "║" . WHITE . "  🚀  makeyoutask.com AUTO BOT" . str_repeat(" ", 21) . CYAN . "║
+" . RESET;
     echo CYAN . "╠═══════════════════════════════════════════════════════════════╣\n" . RESET;
-    echo CYAN . "║" . WHITE . "  1. Run Account" . str_repeat(" ", 45) . CYAN . "║\n" . RESET;
-    echo CYAN . "║" . WHITE . "  2. Add Account" . str_repeat(" ", 45) . CYAN . "║\n" . RESET;
-    echo CYAN . "║" . WHITE . "  3. Delete Account" . str_repeat(" ", 43) . CYAN . "║\n" . RESET;
-    echo CYAN . "║" . WHITE . "  4. View Accounts" . str_repeat(" ", 43) . CYAN . "║\n" . RESET;
-    echo CYAN . "║" . WHITE . "  5. Exit" . str_repeat(" ", 52) . CYAN . "║\n" . RESET;
+    echo CYAN . "║" . WHITE . "  1. Run Account (Single)" . str_repeat(" ", 36) . CYAN . "║
+" . RESET;
+    echo CYAN . "║" . WHITE . "  2. Run All Accounts (Smart)" . str_repeat(" ", 32) . CYAN . "║
+" . RESET;
+    echo CYAN . "║" . WHITE . "  3. Add Account" . str_repeat(" ", 45) . CYAN . "║
+" . RESET;
+    echo CYAN . "║" . WHITE . "  4. Edit Account" . str_repeat(" ", 44) . CYAN . "║
+" . RESET;
+    echo CYAN . "║" . WHITE . "  5. Delete Account" . str_repeat(" ", 42) . CYAN . "║
+" . RESET;
+    echo CYAN . "║" . WHITE . "  6. View Accounts" . str_repeat(" ", 43) . CYAN . "║
+" . RESET;
+    echo CYAN . "║" . WHITE . "  7. Exit" . str_repeat(" ", 52) . CYAN . "║
+" . RESET;
     echo CYAN . "╚═══════════════════════════════════════════════════════════════╝\n" . RESET;
-    echo "\n";
+    echo "
+";
     echo WHITE . "Choose an option: " . RESET;
 }
 
@@ -475,8 +539,27 @@ function ptc($email, $proxy) {
         $GLOBALS['ptc_totalclaims'] = ($GLOBALS['ptc_totalclaims'] ?? 0) + 1;
         if ($msg !== '' || $redirect_url !== '') {
             $GLOBALS['ptc_claims'] = ($GLOBALS['ptc_claims'] ?? 0) + 1;
-            echo WHITE . '[ ' . GREEN . $GLOBALS['ptc_claims'] . WHITE . " / " . YELLOW . $GLOBALS['ptc_totalclaims'] . WHITE . ' ] ' . GREEN . ($redirect_url ?: $msg) . RESET . "\n";
-            echo WHITE . '[ ' . GREEN . $GLOBALS['ptc_claims'] . WHITE . " / " . YELLOW . $GLOBALS['ptc_totalclaims'] . WHITE . ' ] ' . GREEN . $msg . WHITE . " | " . balance($email, $proxy) . " | " . YELLOW . get_balance() . RESET . "\n";
+            if (function_exists("claimBoxOpen")) {
+                claimBoxOpen("✅  PTC CLAIM");
+                if (!empty($currentUrl)) claimBoxRow("🔗 URL", CYAN . substr($currentUrl, 0, 45) . RESET);
+                $ctype = $GLOBALS["last_captcha_type"] ?? "";
+                $tlen = (int)($GLOBALS["last_captcha_len"] ?? 0);
+                $tprev = !empty($GLOBALS["last_captcha_token"]) ? substr($GLOBALS["last_captcha_token"], 0, 22) . "..." : "";
+                if ($ctype) claimBoxRow("🧩 Captcha", YELLOW . $ctype . RESET);
+                if ($tlen > 0) claimBoxRow("🔑 Token Len", GREEN . $tlen . RESET);
+                if ($tprev) claimBoxRow("🔐 Token", GREY . $tprev . RESET);
+                claimBoxRow("📊 Claim", GREEN . $GLOBALS['ptc_claims'] . WHITE . " / " . YELLOW . $GLOBALS['ptc_totalclaims'] . RESET);
+                claimBoxRow("🎁 Reward", GREEN . "+" . $msg . RESET);
+                claimBoxRow("💰 Balance", YELLOW . (isset($balance) ? $balance : get_balance()) . RESET);
+                claimBoxClose();
+            } else {
+                logClaim($GLOBALS['ptc_claims'], $GLOBALS['ptc_totalclaims'], $msg, isset($balance) ? $balance : get_balance(), null, [
+                    "URL" => isset($currentUrl) ? substr($currentUrl, 0, 40) : "",
+                    "Type" => $GLOBALS["last_captcha_type"] ?? "",
+                    "Token Len" => $GLOBALS["last_captcha_len"] ?? 0,
+                    "Token" => !empty($GLOBALS["last_captcha_token"]) ? substr($GLOBALS["last_captcha_token"], 0, 22) . "..." : "",
+                ]);
+            }
         }
 
         // Small cooldown to avoid hammering the endpoint
@@ -578,7 +661,27 @@ function autoWatch($email, $proxy) {
         if (($js['status'] ?? '') === 'success') {
             $GLOBALS['ptc_claims'] = ($GLOBALS['ptc_claims'] ?? 0) + 1;
             $msg = $js['message'] ?? 'Rewarded';
-            echo WHITE . '[ ' . GREEN . $GLOBALS['ptc_claims'] . WHITE . " / " . YELLOW . $GLOBALS['ptc_totalclaims'] . WHITE . ' ] ' . GREEN . $msg . WHITE . " | " . balance($email, $proxy) . " | " . YELLOW . get_balance() . RESET . "\n";
+            if (function_exists("claimBoxOpen")) {
+                claimBoxOpen("✅  PTC CLAIM");
+                if (!empty($currentUrl)) claimBoxRow("🔗 URL", CYAN . substr($currentUrl, 0, 45) . RESET);
+                $ctype = $GLOBALS["last_captcha_type"] ?? "";
+                $tlen = (int)($GLOBALS["last_captcha_len"] ?? 0);
+                $tprev = !empty($GLOBALS["last_captcha_token"]) ? substr($GLOBALS["last_captcha_token"], 0, 22) . "..." : "";
+                if ($ctype) claimBoxRow("🧩 Captcha", YELLOW . $ctype . RESET);
+                if ($tlen > 0) claimBoxRow("🔑 Token Len", GREEN . $tlen . RESET);
+                if ($tprev) claimBoxRow("🔐 Token", GREY . $tprev . RESET);
+                claimBoxRow("📊 Claim", GREEN . $GLOBALS['ptc_claims'] . WHITE . " / " . YELLOW . $GLOBALS['ptc_totalclaims'] . RESET);
+                claimBoxRow("🎁 Reward", GREEN . "+" . $msg . RESET);
+                claimBoxRow("💰 Balance", YELLOW . (isset($balance) ? $balance : get_balance()) . RESET);
+                claimBoxClose();
+            } else {
+                logClaim($GLOBALS['ptc_claims'], $GLOBALS['ptc_totalclaims'], $msg, isset($balance) ? $balance : get_balance(), null, [
+                    "URL" => isset($currentUrl) ? substr($currentUrl, 0, 40) : "",
+                    "Type" => $GLOBALS["last_captcha_type"] ?? "",
+                    "Token Len" => $GLOBALS["last_captcha_len"] ?? 0,
+                    "Token" => !empty($GLOBALS["last_captcha_token"]) ? substr($GLOBALS["last_captcha_token"], 0, 22) . "..." : "",
+                ]);
+            }
 
             // Refresh the CSRF for next call
             if (!empty($js['csrf_token'])) {
@@ -610,31 +713,58 @@ function runAccount($account) {
     $email = $account['email'];
     $password = isset($account['password']) ? $account['password'] : '';
     $proxy = isset($account['proxy']) ? $account['proxy'] : null;
-    
-    echo "\n" . CYAN . "═══════════════════════════════════════════════════════════════\n" . RESET;
-    echo WHITE . "  👤 Running account: " . GREEN . $email . RESET . "\n";
-    if ($proxy) {
-        echo WHITE . "  🌐 Proxy: " . CYAN . $proxy . RESET . "\n";
+    $GLOBALS['__run_password'] = $password;
+    $GLOBALS['faucet_claims'] = 0;
+    $GLOBALS['faucet_totalclaims'] = 0;
+
+    if (function_exists("themeAccount")) {
+        $ex = [];
+        if (empty($password)) $ex["Note"] = YELLOW . "No password set" . RESET;
+        themeAccount($email, $proxy ?? null, $ex);
     }
-    if (empty($password)) {
-        echo YELLOW . "  ⚠️  No password set for this account\n" . RESET;
-    }
-    echo CYAN . "═══════════════════════════════════════════════════════════════\n" . RESET;
-    
-    $login = login($email, $password, $proxy);
-    if($login){
-        echo GREEN . "✓ Login Successful\n" . RESET;
-        $GLOBALS['faucet_claims'] = 0;
-        $GLOBALS['faucet_totalclaims'] = 0;
-        while(true){
-        ptc($email, $proxy);
-        autoWatch($email,$proxy);
-        countdown(60,"Retrying In ");
+
+    // ===== SINGLE ACCOUNT LOOP — never returns to menu (Ctrl+C to stop) =====
+    while (true) {
+        $login = login($email, $password, $proxy);
+        if (!$login) {
+            if (function_exists("themeLogin")) {
+                themeLogin(false, $email, ["Account" => GREEN . $email . RESET, "Next" => YELLOW . "retry in 15s" . RESET]);
+            } else {
+                echo RED . "Login failed — retry 15s\n" . RESET;
+            }
+            sleep(15);
+            continue;
         }
-    } else {
-        echo RED . "✗ Login Failed for: " . $email . "\n" . RESET;
+        if (function_exists("themeLogin")) {
+            themeLogin(true, "", ["Account" => GREEN . $email . RESET, "Mode" => WHITE . "Single loop" . RESET]);
+        } else {
+            echo GREEN . "Login OK\n" . RESET;
+        }
+
+        // faucet() is also while(true); if it ever returns, we re-login and continue
+        if (function_exists("faucet")) {
+            faucet($email, $proxy);
+        }
+        // also run other earners if present (ptc/shortlink) once per outer cycle
+        if (function_exists("ptc")) {
+            try { ptc($email, $proxy); } catch (Throwable $e) {}
+        }
+        if (function_exists("shortlink")) {
+            try { shortlink($email, $proxy); } catch (Throwable $e) {}
+        }
+
+        if (function_exists("themeStatus")) {
+            themeStatus("🔄  NEXT CYCLE", [
+                "Account" => GREEN . $email . RESET,
+                "Action"  => WHITE . "Re-check in 5s (Ctrl+C to stop)" . RESET,
+            ]);
+        } else {
+            echo CYAN . "🔄 Next cycle in 5s...\n" . RESET;
+        }
+        sleep(5);
     }
 }
+
 
 if (php_sapi_name() !== 'cli') {
     die("This script must be run from the command line!\n");
@@ -655,12 +785,18 @@ while(true) {
                 $account = selectAccount();
                 if ($account) {
                     runAccount($account);
-                    echo "\n" . WHITE . "Press Enter to continue..." . RESET;
-                    fgets(STDIN);
+                    // single account loops forever — no Press Enter
+                    break;
                 }
                 break;
                 
-            case '2': // Add Account
+            
+            case '2': // Run All Accounts (Smart)
+                runAllAccountsSmart();
+                echo "\n" . WHITE . "Press Enter to continue..." . RESET;
+                fgets(STDIN);
+                break;
+case '3': // Add Account
                 echo WHITE . "Enter email: " . RESET;
                 $email = trim(fgets(STDIN));
                 if (empty($email)) {
@@ -684,7 +820,12 @@ while(true) {
                 fgets(STDIN);
                 break;
                 
-            case '3': // Delete Account
+            case '4': // Edit Account
+                echo YELLOW . "Edit: delete then re-add for now, or use Single scripts.\n" . RESET;
+                echo WHITE . "Press Enter..." . RESET;
+                fgets(STDIN);
+                break;
+            case '5': // Delete Account
                 $accounts = loadAccounts();
                 if (empty($accounts)) {
                     echo YELLOW . "No accounts to delete.\n" . RESET;
@@ -702,13 +843,13 @@ while(true) {
                 fgets(STDIN);
                 break;
                 
-            case '4': // View Accounts
+            case '6': // View Accounts
                 displayAccounts();
                 echo "\n" . WHITE . "Press Enter to continue..." . RESET;
                 fgets(STDIN);
                 break;
                 
-            case '5': // Exit
+            case '7': // Exit
                 echo GREEN . "Goodbye!\n" . RESET;
                 exit(0);
                 break;

@@ -1,5 +1,5 @@
 {
-  "version": "2.0.0",
+  "version": "2.0.1",
   "name": "BuxadsBot",
   "features": [
     "crystal boxes",
@@ -8,10 +8,10 @@
     "captcha slot auto-retry",
     "btcadspace surf+videos",
     "99faucet one-coin",
-    "earnsolana/claimcoin/claimcrypto/freeltc.fun",
+    "earnsolana faucet+ptc loop",
+    "PHP 8.5 curl_close fix",
     "hotfaucet links stop if <=1",
-    "HAR reward Swal parse",
-    "Windows-safe runner display_errors"
+    "HAR reward Swal parse"
   ],
   "updated": "2026-09-28",
   "repo": "GLITCH083/Buxads-scripts"

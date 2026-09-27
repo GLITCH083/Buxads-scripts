@@ -69,7 +69,11 @@ function githubApiRequest($endpoint) {
     
     $response = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+    // curl_close() deprecated in PHP 8.5+ (handle auto-closes)
+        if (\PHP_VERSION_ID < 80500) {
+            @curl_close($ch);
+        }
+        unset($ch);
     
     if ($httpCode == 200 && $response) {
         return json_decode($response, true);
@@ -104,7 +108,11 @@ function githubDownloadFile($path) {
     
     $response = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+    // curl_close() deprecated in PHP 8.5+ (handle auto-closes)
+        if (\PHP_VERSION_ID < 80500) {
+            @curl_close($ch);
+        }
+        unset($ch);
     
     if ($httpCode == 200 && $response) {
         return $response;

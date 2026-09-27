@@ -615,7 +615,11 @@ function Run($url, $head = 0, $post = 0, $data = "data", $proxy = 0, $returnType
         $response = curl_exec($ch);
         $info = curl_getinfo($ch);
         $curlErr = curl_error($ch);
-        curl_close($ch);
+        // curl_close() deprecated in PHP 8.5+ (handle auto-closes)
+        if (\PHP_VERSION_ID < 80500) {
+            @curl_close($ch);
+        }
+        unset($ch);
 
         if ($response !== false && $info['http_code'] != 0) {
 

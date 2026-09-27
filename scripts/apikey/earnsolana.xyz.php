@@ -212,6 +212,113 @@ function login($email, $password, $proxy) {
     return $ok;
 }
 
+
+/** One faucet claim attempt (or wait timer). Returns after claim or wait. */
+function faucetOnce($email, $proxy) {
+    $r = Run(SITE . "/faucet/earn", headers(), null, null, $proxy, 0, $email);
+    $code = (int)($r["info"]["http_code"] ?? 0);
+    if ($code === 503) { sleep(5); return; }
+    if ($code !== 200) { sleep(8); return; }
+    $body = $r["body"] ?? "";
+
+    $timer = 0;
+    if (preg_match('/let\s+wait\s*=\s*(\d+)/', $body, $m)) $timer = intval($m[1]);
+    elseif (preg_match('/var\s+wait\s*=\s*(\d+)/', $body, $m)) $timer = intval($m[1]);
+    elseif (preg_match('/const\s+wait\s*=\s*(\d+)/', $body, $m)) $timer = intval($m[1]);
+    if ($timer > 0) {
+        // Short wait: sleep then return so PTC can run between cycles
+        if ($timer > 120) {
+            if (function_exists("themeOpen")) {
+                themeOpen("⏳  FAUCET COOLDOWN");
+                themeRow("Wait", $timer . "s — running PTC then back");
+                if (function_exists("themeClose")) themeClose();
+            }
+            return; // long cooldown → do PTC first
+        }
+        countdown($timer, "⏳ Faucet ");
+        return;
+    }
+
+    $csrf = hidden($body, "csrf_token_name");
+    $token = hidden($body, "token");
+    $ticket = hidden($body, "earn_ticket");
+    $fp = hidden($body, "fp_hash");
+    if ($token === "") {
+        sleep(10);
+        return;
+    }
+
+    $sk = sitekey($body);
+    $capType = "Turnstile";
+    $capToken = "";
+    $cap = captcha(SITE . "/faucet/earn", $sk, "turnstile");
+    $capToken = capToken($cap);
+    if ($capToken === "" && function_exists("capToken")) {
+        // optional: still try without captcha if site allows
+        $capType = "Not required / failed";
+    }
+
+    $fields = [
+        "csrf_token_name" => $csrf,
+        "token" => $token,
+        "earn_ticket" => $ticket,
+        "fp_hash" => $fp,
+        "confirm_wallet" => "",
+        "wallet" => $email,
+    ];
+    if ($capToken !== "") {
+        $fields["captcha"] = "turnstile";
+        $fields["cf-turnstile-response"] = $capToken;
+        $capType = "Turnstile";
+    } else {
+        $capType = "Not required";
+    }
+
+    $post = Run(SITE . "/faucet/earn", headerss(SITE . "/faucet/earn"), http_build_query($fields), null, $proxy, 0, $email);
+    $loc = SITE . "/faucet/earn";
+    $hdr = $post["header"] ?? [];
+    if (is_array($hdr) && !empty($hdr["location"])) {
+        $loc = is_array($hdr["location"]) ? $hdr["location"][0] : $hdr["location"];
+    }
+    if (!empty($post["info"]["redirect_url"])) $loc = $post["info"]["redirect_url"];
+    $after = Run($loc, headers(), null, null, $proxy, 0, $email);
+    $msg = extractSwalReward($after["body"] ?? "");
+    if ($msg === "") $msg = extractSwalReward($post["body"] ?? "");
+    if ($msg === "") {
+        if (preg_match('/success|added|credited|earned/i', ($after["body"] ?? "") . ($post["body"] ?? ""))) {
+            $msg = "Claim successful";
+        } else {
+            $msg = "Claim submitted";
+        }
+    }
+    $bal = "";
+    if (preg_match('/([\d,.]+)\s*(?:Coins?|Balance)/i', $after["body"] ?? "", $bm)) $bal = $bm[1];
+
+    $GLOBALS["faucet_totalclaims"]++;
+    $GLOBALS["faucet_claims"]++;
+    if (function_exists("claimBoxOpen")) {
+        claimBoxOpen("✅  FAUCET CLAIM");
+        claimBoxRow("🧩 Captcha", $capType);
+        if ($capToken !== "") {
+            claimBoxRow("🔑 Token Len", (string)strlen($capToken));
+            claimBoxRow("🔐 Token", substr($capToken, 0, 28) . "...");
+        }
+        claimBoxRow("📊 Claim", $GLOBALS["faucet_claims"] . " / " . $GLOBALS["faucet_totalclaims"]);
+        claimBoxRow("🎁 Reward", $msg);
+        if ($bal !== "") claimBoxRow("💰 Balance", $bal);
+        claimBoxRow("Status", "SUCCESS");
+        claimBoxClose();
+    } elseif (function_exists("themeOpen")) {
+        themeOpen("✅  FAUCET CLAIM");
+        themeRow("Captcha", $capType);
+        themeRow("Reward", $msg);
+        themeRow("Claim #", $GLOBALS["faucet_claims"] . " / " . $GLOBALS["faucet_totalclaims"]);
+        if (function_exists("themeClose")) themeClose();
+    }
+    sleep(mt_rand(3, 6));
+}
+
+
 function faucet($email, $proxy) {
     // claimpepe-style: forever loop this account
     while (true) {
@@ -384,11 +491,12 @@ function runAccount($account) {
             claimBoxRow("Status", GREEN . "Successful" . RESET);
             claimBoxClose();
         }
-        // faucet loops forever on timers; PTC runs when faucet is in wait — so alternate:
-        // run one faucet cycle is internal; after long wait we also want PTC.
-        // Structure like claimpepe: faucet is infinite. Run PTC first then faucet forever.
-        ptc($email, $proxy);
-        faucet($email, $proxy); // never returns until Ctrl+C
+        // Main loop: FAUCET first, then PTC, forever (Ctrl+C to stop)
+        while (true) {
+            faucetOnce($email, $proxy);
+            ptc($email, $proxy);
+            sleep(2);
+        }
     }
 }
 

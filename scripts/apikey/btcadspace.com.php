@@ -314,7 +314,7 @@ function btcGet($path, $cookie = null) {
     $hs = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
     $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $final = curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
-    curl_close($ch);
+    if (\PHP_VERSION_ID < 80500) { @curl_close($ch); } unset($ch);
     return ["header" => substr($resp, 0, $hs), "body" => substr($resp, $hs), "http_code" => $code, "url" => $final];
 }
 
@@ -337,7 +337,7 @@ function btcPost($path, $data, $cookie = null, $referer = "", $ajax = false) {
     $resp = curl_exec($ch);
     $hs = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
     $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+    if (\PHP_VERSION_ID < 80500) { @curl_close($ch); } unset($ch);
     return ["header" => substr($resp, 0, $hs), "body" => substr($resp, $hs), "http_code" => $code];
 }
 
@@ -889,7 +889,7 @@ function avisoJson($method, $url, $apiKey, $jsonBody = null) {
     curl_setopt_array($ch, $opts);
     $raw = curl_exec($ch);
     $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+    if (\PHP_VERSION_ID < 80500) { @curl_close($ch); } unset($ch);
     $j = json_decode($raw, true);
     return ["http_code" => $code, "body" => $raw, "json" => is_array($j) ? $j : []];
 }

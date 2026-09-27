@@ -28,7 +28,7 @@ $tokenFile = BASE_DIR . "/github_token.txt";
 if (file_exists($tokenFile)) {
     $githubToken = trim(file_get_contents($tokenFile));
 } else {
-    $githubToken = "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";
+    $githubToken = "";
 }
 
 define("GITHUB_TOKEN", $githubToken);
@@ -667,26 +667,46 @@ function displayScriptsList($scripts) {
 }
 
 function runScript($script) {
-    echo "\n";
-    echo GREEN . "▶  Running: " . WHITE . $script['basename'] . "\n" . RESET;
-    echo CYAN . str_repeat("═", 70) . "\n" . RESET;
-    echo "\n";
-    
-    $cwd = getcwd();
-    chdir(SCRIPTS_DIR);
-    
-    if (file_exists($script['file'])) {
-        include $script['file'];
-    } else {
-        echo RED . "✗ Script file not found: " . $script['file'] . "\n" . RESET;
+    echo "
+";
+    echo GREEN . "▶  Running: " . WHITE . $script['basename'] . "
+" . RESET;
+    echo CYAN . str_repeat("═", 70) . "
+" . RESET;
+    echo "
+";
+
+    $file = $script['file'];
+    if (!file_exists($file)) {
+        echo RED . "✗ Script file not found: " . $file . "
+" . RESET;
+        return;
     }
-    
-    echo "\n";
-    echo CYAN . str_repeat("═", 70) . "\n" . RESET;
-    echo GREEN . "✓ Script completed!\n" . RESET;
-    
+
+    // Run in SEPARATE php process (include kills whole bot on any fatal error)
+    $php = (defined('PHP_BINARY') && PHP_BINARY) ? PHP_BINARY : 'php';
+    $cmd = escapeshellarg($php) . ' ' . escapeshellarg($file);
+    $cwd = getcwd();
+    // Run from bot root so relative paths / configs work
+    if (defined('BASE_DIR') && is_dir(BASE_DIR)) {
+        chdir(BASE_DIR);
+    }
+    passthru($cmd, $exitCode);
     chdir($cwd);
+
+    echo "
+";
+    echo CYAN . str_repeat("═", 70) . "
+" . RESET;
+    if ($exitCode === 0) {
+        echo GREEN . "✓ Script completed!
+" . RESET;
+    } else {
+        echo YELLOW . "⚠ Script exited with code " . $exitCode . "
+" . RESET;
+    }
 }
+
 
 function getUserInput($prompt, $default = null) {
     echo WHITE . $prompt . RESET;

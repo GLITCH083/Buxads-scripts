@@ -1,11 +1,7 @@
 {
-    "version": "1.1.5",
+    "version": "1.1.6",
     "features": [
-        "Fixed: MoonPtc",
-        "Added: FaucetFi (Telegram Script) ",
-        "Added 2x Reward & dripFaucet in Coinfree (Telegram Script)",
-        "Removed: EarnSolana Due to NO Withdraw in FP currently",
-        "Removed Ourcoincash Due TO Captcha No Longer Available in Captcha Server"
+        "Fixed everything"
     ],
-    "last_updated": "2026-9-21"
+    "last_updated": "2026-9-28"
 }

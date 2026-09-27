@@ -3,7 +3,12 @@
 date_default_timezone_set("Asia/Karachi");
 
 define("APP_HOST", "buxads-Bot");
-define("BASE_DIR", __DIR__);
+// Auto-detect project root
+$root = __DIR__;
+while ($root !== "/" && !file_exists($root . "/functions/function.php")) {
+    $root = dirname($root);
+}
+define("BASE_DIR", $root);
 
 // ================== FIX 1: ADD API_URL ==================
 define("API_URL", "https://mini.keran.co/api.php");
@@ -21,6 +26,8 @@ if (!file_exists(BASE_DIR . "/functions/captcha.php")) {
 include_once BASE_DIR . "/functions/function.php";
 include_once BASE_DIR . "/functions/captcha.php";
 
+
+enableCtrlC();
 
 if (!defined("anticaptcha_key")) define("anticaptcha_key", saveData(APP_HOST, "anticaptcha-apikey"));
 if (!defined("api_endpoint")) define("api_endpoint", "http://37.60.224.60:7860/api");
@@ -377,7 +384,11 @@ function runFaucet($account) {
 
                 $msg = "+{$reward} {$coin}";
                 // Display in the requested format
-                echo WHITE . '[ ' . GREEN . $GLOBALS['faucet_claims'] . WHITE . " / " . YELLOW . $GLOBALS['faucet_totalclaims'] . WHITE . ' ] ' . GREEN . $msg . WHITE . " | " . YELLOW . $balance . " $coin" . RESET . " | " . get_balance() . RESET . "\n";
+                logClaim($GLOBALS['faucet_claims'], $GLOBALS['faucet_totalclaims'], $msg, get_balance(), null, [
+                        "Type" => isset($captchaType) ? $captchaType : "Unknown",
+                        "Token Len" => isset($tokenLen) ? $tokenLen : 0,
+                        "Token" => isset($tokenPreview) ? $tokenPreview : "",
+                    ]);
                 countdown(60,"");
             } else {
                 $msg = $result['message'] ?? 'unknown error';
@@ -387,7 +398,11 @@ function runFaucet($account) {
                 saveStats($accountId, $stats);
                 $GLOBALS['faucet_totalclaims'] = $stats['totalclaims'];
                 // Display with 0 claim increment
-                echo WHITE . '[ ' . GREEN . $GLOBALS['faucet_claims'] . WHITE . " / " . YELLOW . $GLOBALS['faucet_totalclaims'] . WHITE . ' ] ' . RED . "Failed" . WHITE . " | " . YELLOW . $balance . " $coin" . RESET . "\n";
+                logClaim($GLOBALS['faucet_claims'], $GLOBALS['faucet_totalclaims'], RED . "Failed" . WHITE . " | " . YELLOW . $balance . " $coin", get_balance(), null, [
+                        "Type" => isset($captchaType) ? $captchaType : "Unknown",
+                        "Token Len" => isset($tokenLen) ? $tokenLen : 0,
+                        "Token" => isset($tokenPreview) ? $tokenPreview : "",
+                    ]);
             }
         }
     }

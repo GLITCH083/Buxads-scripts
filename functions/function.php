@@ -27,6 +27,238 @@ define("RESET", WHITE);
 define("BG_END", "\033[0m");
 if (!defined("BOLD")) define("BOLD", "\033[1m");
 if (!defined("DIM")) define("DIM", "\033[2m");
+
+// ============================================
+// PROFESSIONAL LOGGING + CTRL+C SUPPORT
+// ============================================
+function enableCtrlC() {
+    if (function_exists('pcntl_async_signals') && function_exists('pcntl_signal')) {
+        pcntl_async_signals(true);
+        pcntl_signal(SIGINT, function () {
+            echo "\n" . YELLOW . "⏹  Stopped by user (Ctrl+C)\n" . RESET;
+            exit(0);
+        });
+        pcntl_signal(SIGTERM, function () {
+            echo "\n" . YELLOW . "⏹  Terminated\n" . RESET;
+            exit(0);
+        });
+    }
+}
+
+
+// ========== SHARED CRYSTAL BOX THEME (all scripts — same as btcadspace) ==========
+if (!function_exists('themeOpen')) {
+function theme_box_w() { return 61; }
+function theme_plain($s) { return preg_replace('/\033\[[0-9;]*m/', '', (string)$s); }
+function themeOpen($title) {
+    $GLOBALS['theme_box_open'] = true;
+    $w = theme_box_w();
+    echo "\n";
+    echo CYAN . "┌" . str_repeat("─", $w) . "┐\n" . RESET;
+    $plain = theme_plain($title);
+    $pad = max(1, $w - 2 - strlen($plain));
+    echo CYAN . "│" . RESET . WHITE . "  " . $title . str_repeat(" ", max(0, $pad - 2)) . CYAN . "│\n" . RESET;
+    echo CYAN . "├" . str_repeat("─", $w) . "┤\n" . RESET;
+}
+function themeRow($label, $value) {
+    $w = theme_box_w();
+    $plainV = theme_plain($value);
+    if (strlen($plainV) > 42) {
+        $plainV = substr($plainV, 0, 39) . "...";
+        $value = $plainV;
+    }
+    $padV = max(1, $w - 16 - strlen($plainV));
+    echo CYAN . "│" . RESET . WHITE . "  " . str_pad((string)$label, 12) . ": " . $value . str_repeat(" ", $padV) . CYAN . "│\n" . RESET;
+}
+
+/** Print a status line inside open box, or normal line if no box open */
+function themeLiveMsg($msg, $color = null) {
+    if (!empty($GLOBALS['theme_box_open']) && function_exists('themeRow')) {
+        themeRow("Status", ($color ? $color : YELLOW) . theme_plain($msg) . RESET);
+        return;
+    }
+    if ($color && defined('RESET')) {
+        echo $color . $msg . RESET . "\n";
+    } else {
+        echo $msg . "\n";
+    }
+}
+
+function themeClose() {
+    echo CYAN . "└" . str_repeat("─", theme_box_w()) . "┘\n" . RESET;
+    $GLOBALS['theme_box_open'] = false;
+}
+function themeStatus($title, $rows) {
+    themeOpen($title);
+    foreach ($rows as $label => $value) themeRow($label, $value);
+    themeClose();
+}
+/** One-shot status box (account header, login, wait, error, etc.) */
+function themeBox($title, $rows = []) {
+    themeStatus($title, $rows);
+}
+/** Account header — used by every script */
+function themeAccount($email, $proxy = null, $extra = []) {
+    $rows = ["Account" => GREEN . $email . RESET];
+    if ($proxy) $rows["Proxy"] = CYAN . $proxy . RESET;
+    foreach ($extra as $k => $v) $rows[$k] = $v;
+    themeStatus("👤  ACCOUNT", $rows);
+}
+/**
+ * Login — ONE box with everything inside
+ * $extra can hold: Account, Mode, Captcha, Token Len, Token, etc.
+ */
+function themeLogin($ok, $detail = "", $extra = []) {
+    $rows = [];
+    foreach ($extra as $k => $v) {
+        $rows[$k] = $v;
+    }
+    if ($detail !== "" && $detail !== null) {
+        if (!isset($rows["Detail"]) && !isset($rows["Account"])) {
+            $rows["Account"] = WHITE . $detail . RESET;
+        } elseif (!isset($rows["Detail"])) {
+            $rows["Detail"] = WHITE . $detail . RESET;
+        }
+    }
+    if ($ok) {
+        $rows["Status"] = GREEN . "Successful" . RESET;
+        themeStatus("✅  LOGIN", $rows);
+    } else {
+        $rows["Status"] = RED . "Failed" . RESET;
+        themeStatus("❌  LOGIN FAILED", $rows);
+    }
+}
+
+/**
+ * Captcha-only box (optional). Prefer putting captcha rows into logClaim instead.
+ */
+function themeCaptcha($type, $tokenLen = 0, $tokenPreview = "", $extra = []) {
+    $rows = ["Type" => YELLOW . $type . RESET];
+    if ($tokenLen > 0) {
+        $rows["Token Len"] = GREEN . (string)$tokenLen . RESET;
+        if ($tokenPreview !== "") $rows["Token"] = GREY . $tokenPreview . RESET;
+    }
+    foreach ($extra as $k => $v) $rows[$k] = $v;
+    themeStatus("🔐  CAPTCHA", $rows);
+}
+}
+
+/**
+ * LIVE claim box — open at start, add rows as work happens, close at end.
+ * Labels use emojis as requested.
+ */
+function claimBoxOpen($title = "✅  CLAIM") {
+    themeOpen($title);
+}
+
+function claimBoxRow($emojiLabel, $value) {
+    // $emojiLabel e.g. "🧩 Captcha", "🔑 Token Len", "🎁 Reward"
+    $w = theme_box_w();
+    $label = (string)$emojiLabel;
+    $plainL = theme_plain($label);
+    $plainV = theme_plain($value);
+    if (strlen($plainV) > 40) {
+        $plainV = substr($plainV, 0, 37) . "...";
+        $value = $plainV;
+    }
+    // label width ~14 visible chars for alignment
+    $labPad = max(1, 14 - strlen($plainL));
+    $line = $label . str_repeat(" ", $labPad) . ": " . $value;
+    $plainLine = theme_plain($line);
+    $pad = max(1, $w - 2 - strlen($plainLine));
+    echo CYAN . "│" . RESET . WHITE . "  " . $line . str_repeat(" ", max(0, $pad - 2)) . CYAN . "│\n" . RESET;
+}
+
+function claimBoxClose() {
+    themeClose();
+}
+
+/**
+ * Final one-shot claim box (emoji labels). Prefer live open/row/close when possible.
+ *
+ * Order:
+ *   🧩 Captcha
+ *   🔑 Token Len
+ *   🔐 Token
+ *   📊 Claim
+ *   🎁 Reward
+ *   💰 Balance
+ */
+function logClaim($claims, $total, $reward, $balance, $apiBalance = null, $extra = []) {
+    // Fallback from last successful captcha solve
+    if (empty($extra["Type"]) || $extra["Type"] === "Unknown") {
+        if (!empty($GLOBALS["last_captcha_type"])) {
+            $extra["Type"] = $GLOBALS["last_captcha_type"];
+        }
+    }
+    if (empty($extra["Token Len"]) || (int)$extra["Token Len"] === 0) {
+        if (!empty($GLOBALS["last_captcha_len"])) {
+            $extra["Token Len"] = $GLOBALS["last_captcha_len"];
+        }
+    }
+    if (empty($extra["Token"])) {
+        if (!empty($GLOBALS["last_captcha_token"])) {
+            $tok = $GLOBALS["last_captcha_token"];
+            $extra["Token"] = substr($tok, 0, 22) . (strlen($tok) > 22 ? "..." : "");
+            if (empty($extra["Token Len"])) $extra["Token Len"] = strlen($tok);
+        }
+    }
+
+    claimBoxOpen("✅  CLAIM SUCCESSFUL");
+
+    $type = isset($extra["Type"]) ? (string)$extra["Type"] : "";
+    if ($type !== "" && strcasecmp($type, "Unknown") !== 0) {
+        claimBoxRow("🧩 Captcha", YELLOW . $type . RESET);
+    }
+    $tlen = isset($extra["Token Len"]) ? (int)$extra["Token Len"] : 0;
+    if ($tlen > 0) {
+        claimBoxRow("🔑 Token Len", GREEN . $tlen . RESET);
+    }
+    $tok = isset($extra["Token"]) ? (string)$extra["Token"] : "";
+    if ($tok !== "") {
+        claimBoxRow("🔐 Token", GREY . $tok . RESET);
+    }
+    if (!empty($extra["URL"])) {
+        claimBoxRow("🔗 URL", CYAN . $extra["URL"] . RESET);
+    }
+    if (!empty($extra["Antibot"])) {
+        claimBoxRow("🧩 Antibot", WHITE . $extra["Antibot"] . RESET);
+    }
+
+    claimBoxRow("📊 Claim", GREEN . $claims . WHITE . " / " . YELLOW . $total . RESET);
+    claimBoxRow("🎁 Reward", GREEN . "+" . $reward . RESET);
+    claimBoxRow("💰 Balance", YELLOW . $balance . RESET);
+
+    if ($apiBalance !== null && $apiBalance !== "") {
+        claimBoxRow("💎 Api Token", PURPLE . $apiBalance . RESET);
+    }
+
+    claimBoxClose();
+}
+
+function logInfo($title, $data = []) {
+    $rows = [];
+    foreach ($data as $k => $v) {
+        $rows[$k] = GREEN . $v . RESET;
+    }
+    if (empty($rows)) $rows["Info"] = $title;
+    themeStatus($title, $rows);
+}
+
+function logFail($title, $detail = "") {
+    themeStatus("❌  " . $title, [
+        "Status" => RED . "Failed" . RESET,
+        "Detail" => $detail ?: "-",
+    ]);
+}
+
+function logWait($msg, $seconds = 0) {
+    $rows = ["Action" => YELLOW . $msg . RESET];
+    if ($seconds > 0) $rows["Wait"] = WHITE . $seconds . "s" . RESET;
+    themeStatus("⏳  WAITING", $rows);
+}
+
+
 // ============================================
 // SAVE DATA FUNCTION
 // ============================================
@@ -605,7 +837,22 @@ function fast($arr) {
 }
 
 function animation($message) {
-    $width = 60;
+    // Compact: one updating line OR one box row (no spam stacks)
+    $plain = preg_replace('/\033\[[0-9;]*m/', '', (string)$message);
+    if (!empty($GLOBALS['theme_box_open']) && function_exists('themeRow')) {
+        static $lastAnim = '';
+        if ($plain === $lastAnim) return;
+        $lastAnim = $plain;
+        themeRow("Captcha", YELLOW . $plain . RESET);
+        return;
+    }
+    // single-line status (overwrite)
+    $color = defined("YELLOW") ? YELLOW : "";
+    $reset = defined("RESET") ? RESET : "";
+    echo "\r" . $color . "🧩 " . $plain . $reset . str_repeat(" ", 8);
+    if (function_exists("flush")) @flush();
+    return;
+    $width = 60; // unreachable legacy
     $msg_effect = substr($message, 0, $width);
     $wait = strlen($message) <= $width;
 
@@ -683,3 +930,83 @@ function clear() {
         passthru('clear');
     }
 }
+
+if (!function_exists('parseRewardMsg')) {
+/** HAR-accurate: claim POSTs return 303; reward is in Swal.fire on the next page. */
+function parseRewardMsg($body, $fallback = "Claim successful") {
+    $body = (string)$body;
+    if ($body === "") return $fallback;
+    // SweetAlert2 from HAR: Swal.fire({ icon: 'success', html: '...', text: '...' })
+    if (preg_match_all("/Swal\\.fire\\(\\{([\\s\\S]*?)\\}\\)/", $body, $blocks)) {
+        foreach ($blocks[1] as $block) {
+            if (stripos($block, "Ad Blocker") !== false) continue;
+            if (stripos($block, "Copied!") !== false) continue;
+            if (stripos($block, "icon:\\s*'error'") !== false || stripos($block, 'icon: "error"') !== false) {
+                if (preg_match("/html:\\s*['`]([^'`]+)['`]|text:\\s*['\"]([^'\"]+)['\"]/", $block, $mm)) {
+                    $t = trim(html_entity_decode(strip_tags($mm[1] !== "" ? $mm[1] : $mm[2])));
+                    if ($t !== "") return $t;
+                }
+                continue;
+            }
+            if (preg_match("/html:\\s*['`]([^'`]{3,200})['`]/", $block, $mm)) {
+                $t = trim(html_entity_decode(strip_tags($mm[1])));
+                if ($t !== "" && stripos($t, "Redirecting") === false) return $t;
+            }
+            if (preg_match("/text:\\s*['\"]([^'\"]{3,200})['\"]/", $block, $mm)) {
+                $t = trim(html_entity_decode(strip_tags($mm[1])));
+                if ($t !== "" && stripos($t, "clipboard") === false) return $t;
+            }
+        }
+    }
+    // JSON
+    $j = @json_decode($body, true);
+    if (is_array($j)) {
+        foreach (array("message", "msg", "reward", "text", "status_message") as $k) {
+            if (!empty($j[$k]) && is_string($j[$k])) {
+                $t = trim(html_entity_decode(strip_tags($j[$k])));
+                if ($t !== "") return $t;
+            }
+        }
+    }
+    if (preg_match('/class="[^"]*alert-success[^"]*"[^>]*>([\\s\\S]{3,200}?)<\\/div>/i', $body, $m)) {
+        $t = trim(html_entity_decode(strip_tags($m[1])));
+        if ($t !== "") return $t;
+    }
+    if (preg_match('/You have (?:earned|received|claimed)[^<!.]{0,100}/i', $body, $m)) {
+        return trim(preg_replace('/\\s+/', ' ', strip_tags($m[0])));
+    }
+    return $fallback;
+}
+}
+
+
+if (!function_exists('claimRewardFromRedirect')) {
+/** After claim POST (303), follow Location or same path and parse Swal reward. */
+function claimRewardFromRedirect($postResult, $fallbackUrl, $proxy, $email, $fallbackMsg = "Claim successful") {
+    $body = is_array($postResult) ? ($postResult["body"] ?? "") : "";
+    $msg = parseRewardMsg($body, "");
+    if ($msg !== "") return $msg;
+    $loc = $fallbackUrl;
+    if (is_array($postResult)) {
+        $hdr = $postResult["header"] ?? [];
+        if (is_array($hdr)) {
+            if (!empty($hdr["location"])) {
+                $loc = trim(is_array($hdr["location"]) ? $hdr["location"][0] : $hdr["location"]);
+            } elseif (!empty($hdr["Location"])) {
+                $loc = trim(is_array($hdr["Location"]) ? $hdr["Location"][0] : $hdr["Location"]);
+            }
+        }
+        $info = $postResult["info"] ?? [];
+        if (!empty($info["redirect_url"])) $loc = $info["redirect_url"];
+    }
+    if (!$loc) $loc = $fallbackUrl;
+    if ($loc && strpos($loc, "http") !== 0 && defined("SITE")) {
+        $loc = rtrim(SITE, "/") . "/" . ltrim($loc, "/");
+    }
+    $h = function_exists("headers") ? headers() : array();
+    $r = Run($loc, $h, null, null, $proxy, 0, $email);
+    return parseRewardMsg($r["body"] ?? "", $fallbackMsg);
+}
+}
+
+

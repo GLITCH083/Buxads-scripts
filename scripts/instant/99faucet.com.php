@@ -13,7 +13,8 @@ while ($root !== "/" && !file_exists($root . "/functions/function.php")) {
     $root = dirname($root);
 }
 define("BASE_DIR", $root);
-error_reporting(0);
+error_reporting(E_ALL);
+ini_set("display_errors", "1");
 
 if (!file_exists(BASE_DIR . "/functions/function.php")) die("ERROR: functions/function.php not found!\n");
 if (!file_exists(BASE_DIR . "/functions/captcha.php")) die("ERROR: functions/captcha.php not found!\n");

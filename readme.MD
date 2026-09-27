@@ -1,11 +1,17 @@
-Buxads Official Bot
+# Buxads Official Bot (Cleaned)
 
 A powerful Faucet Scraper Tool built for automated faucet claiming and website management.
 
-Features
+## Version 1.2.0 (Cleaned)
 
-- BuxAds - support
+### Changes in this clean version
+- Removed large training datasets (`shake_dataset.zip`, captcha images)
+- Removed personal accounts, configs, sessions, and information folders
+- Removed hardcoded GitHub token (now uses `github_token.txt` if present)
+- Cleaner package, ready for fresh setup
 
+### Features
+- BuxAds support
 - Individual script execution
 - Puppeteer Real Browser support
 - Chromium support
@@ -14,19 +20,23 @@ Features
 
 ---
 
-Installation
+### Installation
 
 1. Navigate to the installation directory:
 
+```bash
 cd installation
+```
 
 2. Run the installer:
 
+```bash
 bash installation.sh
+```
 
 ---
 
-Termux-X11 Setup
+### Termux-X11 Setup
 
 Download the correct Termux-X11 application for your device:
 
@@ -36,64 +46,65 @@ Install the application and make sure it launches correctly.
 
 ---
 
-Verify Installation
+### Verify Installation
 
 Before running the bot, verify that the following dependencies are installed:
 
+```bash
 php -v
 node -v
+```
 
 Also verify:
-
 - Puppeteer Real Browser
 - Chromium
 
 ---
 
+### Running the Bot
 
-Running the Bot
+**Session 1 (Termux-X11)**
 
-Session 1 (Termux-X11)
-
-Open the first Termux session and run:
-
+```bash
 termux-x11 :1 &
 export DISPLAY=:1
 php cf.php
+```
 
 Keep this session running.
 
-Session 2 (Bot)
+**Session 2 (Bot)**
 
-Open a second Termux session and run:
-
+```bash
 php bot.php
+```
 
+---
 
-Scripts Folder
+### Scripts Folder
 
-In addition to "bot.php", individual scripts can be executed directly from the "scripts" folder.
+In addition to `bot.php`, individual scripts can be executed directly from the `scripts` folder.
 
 This allows you to run specific website scripts without using the main bot.
 
 ---
 
-API Key Requirement
+### API Key Requirement
 
 This project requires an API Key from:
 
-@buxads_bot
+**@buxads_bot**
 
 Make sure your API Key is configured before running the bot.
 
 ---
 
-Creator
+### Creator
 
 Telegram: @glitch_394
 
 ---
 
-Disclaimer
+### Disclaimer
 
 This project is provided for educational and research purposes only. Users are responsible for complying with the terms and conditions of any website they interact with.

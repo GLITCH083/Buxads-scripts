@@ -4,7 +4,7 @@
  * 🤖 Bot Launcher - Script Manager
  * 
  * @author GLITCH083
- * @version v2.0
+ * @version 2.0.0
  */
 
 // Suppress all errors
@@ -684,26 +684,34 @@ function runScript($script) {
     }
 
     // Run in SEPARATE php process (include kills whole bot on any fatal error)
+    // Windows-safe + show PHP errors (fixes silent exit 255)
     $php = (defined('PHP_BINARY') && PHP_BINARY) ? PHP_BINARY : 'php';
-    $cmd = escapeshellarg($php) . ' ' . escapeshellarg($file);
     $cwd = getcwd();
-    // Run from bot root so relative paths / configs work
     if (defined('BASE_DIR') && is_dir(BASE_DIR)) {
         chdir(BASE_DIR);
     }
-    passthru($cmd, $exitCode);
+    $exitCode = 0;
+    $cmdArr = [$php, '-d', 'display_errors=1', '-d', 'error_reporting=E_ALL', $file];
+    if (function_exists('proc_open')) {
+        $desc = [0 => STDIN, 1 => STDOUT, 2 => STDOUT];
+        $proc = @proc_open($cmdArr, $desc, $pipes, (defined('BASE_DIR') ? BASE_DIR : $cwd));
+        if (is_resource($proc)) {
+            $exitCode = proc_close($proc);
+        } else {
+            passthru(escapeshellarg($php) . ' -d display_errors=1 ' . escapeshellarg($file), $exitCode);
+        }
+    } else {
+        passthru(escapeshellarg($php) . ' -d display_errors=1 ' . escapeshellarg($file), $exitCode);
+    }
     chdir($cwd);
 
-    echo "
-";
-    echo CYAN . str_repeat("═", 70) . "
-" . RESET;
+    echo "\n";
+    echo CYAN . str_repeat("═", 70) . "\n" . RESET;
     if ($exitCode === 0) {
-        echo GREEN . "✓ Script completed!
-" . RESET;
+        echo GREEN . "✓ Script completed!\n" . RESET;
     } else {
-        echo YELLOW . "⚠ Script exited with code " . $exitCode . "
-" . RESET;
+        echo YELLOW . "⚠ Script exited with code " . $exitCode . "\n" . RESET;
+        echo YELLOW . "  Re-check PHP errors printed above. Do not use old folders.\n" . RESET;
     }
 }
 

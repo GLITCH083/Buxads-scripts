@@ -242,13 +242,10 @@ function faucet($email, $proxy) {
         }
 
         // HAR always sent captcha=turnstile on claim
-        $sk = sitekey($body);
-        $capType = "Turnstile";
-        $capToken = "";
-        $cap = captcha(SITE . "/faucet/earn", $sk, "turnstile");
-        $capToken = capToken($cap);
-
-        $fields = [
+        $capType = "Not required";
+    $capToken = "";
+    // Faucet: no Turnstile checkbox on this site — claim without captcha
+    $fields = [
             "csrf_token_name" => $csrf,
             "token" => $token,
             "earn_ticket" => $ticket,
@@ -329,8 +326,9 @@ function ptc($email, $proxy) {
 
         $csrf = hidden($body, "csrf_token_name");
         $sk = sitekey($body);
-        $cap = captcha(SITE . "/ptc/window/" . $id, $sk, "turnstile");
-        $ts = capToken($cap);
+        // PTC on this family: no Turnstile checkbox — verify without captcha
+        $ts = "";
+        $sk = "";
         $fields = ["csrf_token_name" => $csrf];
         if ($ts) {
             $fields["captcha"] = "turnstile";
@@ -439,8 +437,7 @@ function menu() {
                     $fp = hidden($body, "fp_hash");
                     if ($token === "") continue;
                     $sk = sitekey($body);
-                    $cap = captcha(SITE . "/faucet/earn", $sk, "turnstile");
-                    $ts = capToken($cap);
+                    $ts = ""; // no captcha on faucet
                     $fields = ["csrf_token_name" => $csrf, "token" => $token, "earn_ticket" => $ticket, "fp_hash" => $fp, "confirm_wallet" => "", "wallet" => $email];
                     if ($ts) { $fields["captcha"] = "turnstile"; $fields["cf-turnstile-response"] = $ts; }
                     $post = Run(SITE . "/faucet/earn", headerss(SITE . "/faucet/earn"), http_build_query($fields), null, $proxy, 0, $email);

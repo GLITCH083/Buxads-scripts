@@ -1,17 +1,15 @@
 {
-  "version": "2.0.1",
+  "version": "2.0.2",
   "name": "BuxadsBot",
-  "features": [
-    "crystal boxes",
-    "single account loop",
-    "smart multi accounts",
-    "captcha slot auto-retry",
-    "btcadspace surf+videos",
-    "99faucet one-coin",
-    "earnsolana faucet+ptc loop",
-    "PHP 8.5 curl_close fix",
-    "hotfaucet links stop if <=1",
-    "HAR reward Swal parse"
+  "whats_new": [
+    "Crystal claim boxes (captcha + reward + balance)",
+    "Single account loops until Ctrl+C",
+    "Run All Accounts (Smart rotation)",
+    "Captcha: auto-retry on no slot / bad token",
+    "Earnsolana: faucet + PTC",
+    "BTCAdSpace: Surf + Videos",
+    "99faucet: one coin until problem",
+    "PHP 8.5 compatible (curl_close fix)"
   ],
   "updated": "2026-09-28",
   "repo": "GLITCH083/Buxads-scripts"

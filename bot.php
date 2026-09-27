@@ -224,11 +224,15 @@ function displayUpdateInfo($current, $latest) {
     echo CYAN . "╠════════════════════════════════════════════════════════════════════════════╣\n" . RESET;
     echo CYAN . "║" . WHITE . "  📝 What's New:" . str_repeat(" ", 56) . CYAN . "║\n" . RESET;
     
-    if (isset($latest['features']) && is_array($latest['features'])) {
-        foreach ($latest['features'] as $feature) {
-            $feature = substr($feature, 0, 60);
-            echo CYAN . "║  " . WHITE . "• " . $feature . str_repeat(" ", 61 - strlen($feature)) . CYAN . "║\n" . RESET;
-        }
+    $news = [];
+    if (isset($latest['whats_new']) && is_array($latest['whats_new'])) {
+        $news = $latest['whats_new'];
+    } elseif (isset($latest['features']) && is_array($latest['features'])) {
+        $news = $latest['features'];
+    }
+    foreach ($news as $feature) {
+        $feature = substr((string)$feature, 0, 60);
+        echo CYAN . "║  " . WHITE . "• " . $feature . str_repeat(" ", max(0, 61 - strlen($feature))) . CYAN . "║\n" . RESET;
     }
     
     echo CYAN . "╚════════════════════════════════════════════════════════════════════════════╝\n" . RESET;

@@ -3,7 +3,12 @@
 date_default_timezone_set("Asia/Karachi");
 
 define("APP_HOST", "buxads-Bot");
-define("BASE_DIR", __DIR__);
+// Auto-detect project root
+$root = __DIR__;
+while ($root !== "/" && !file_exists($root . "/functions/function.php")) {
+    $root = dirname($root);
+}
+define("BASE_DIR", $root);
 
 error_reporting(0);
 // Include functions
@@ -30,6 +35,8 @@ if (!defined("GREEN")) {
     define("WHITE", "\033[1;37m");
     define("RESET", "\033[0m");
 }
+
+enableCtrlC();
 
 if (!defined("anticaptcha_key")) define("anticaptcha_key", saveData(APP_HOST, "anticaptcha-apikey"));
 if (!defined("api_endpoint")) define("api_endpoint", "http://37.60.224.60:7860/api");
@@ -186,17 +193,42 @@ function selectAccount() {
     return $accounts[$choice - 1];
 }
 
+
+function runAllAccountsSmart() {
+    $accounts = loadAccounts();
+    if (empty($accounts)) {
+        echo YELLOW . "No accounts found!\n" . RESET;
+        return;
+    }
+    echo "\n";
+    echo CYAN . "╔═══════════════════════════════════════════════════════════════╗\n" . RESET;
+    echo CYAN . "║" . WHITE . "  🔄  RUN ALL ACCOUNTS (SMART)" . str_repeat(" ", 31) . CYAN . "║\n" . RESET;
+    echo CYAN . "╚═══════════════════════════════════════════════════════════════╝\n" . RESET;
+    $i = 0;
+    foreach ($accounts as $acc) {
+        $i++;
+        $label = is_array($acc) ? ($acc['email'] ?? $acc[0] ?? "acc$i") : $acc;
+        echo "\n" . CYAN . "── Account $i / " . count($accounts) . " · " . $label . " ──\n" . RESET;
+        if (function_exists('runAccount')) {
+            runAccount($acc);
+        }
+        sleep(mt_rand(3, 8));
+    }
+    echo GREEN . "\n✔ All accounts finished\n" . RESET;
+}
+
 function menu() {
     clear();
     echo "\n";
     echo CYAN . "╔═══════════════════════════════════════════════════════════════╗\n" . RESET;
     echo CYAN . "║" . WHITE . "  🚀  gamefaucet.fun AUTO BOT" . str_repeat(" ", 30) . CYAN . "║\n" . RESET;
     echo CYAN . "╠═══════════════════════════════════════════════════════════════╣\n" . RESET;
-    echo CYAN . "║" . WHITE . "  1. Run Account" . str_repeat(" ", 45) . CYAN . "║\n" . RESET;
-    echo CYAN . "║" . WHITE . "  2. Add Account" . str_repeat(" ", 45) . CYAN . "║\n" . RESET;
-    echo CYAN . "║" . WHITE . "  3. Delete Account" . str_repeat(" ", 43) . CYAN . "║\n" . RESET;
-    echo CYAN . "║" . WHITE . "  4. View Accounts" . str_repeat(" ", 43) . CYAN . "║\n" . RESET;
-    echo CYAN . "║" . WHITE . "  5. Exit" . str_repeat(" ", 52) . CYAN . "║\n" . RESET;
+    echo CYAN . "║" . WHITE . "  1. Run Account (Single)" . str_repeat(" ", 36) . CYAN . "║\n" . RESET;
+    echo CYAN . "║" . WHITE . "  2. Run All Accounts (Smart)" . str_repeat(" ", 32) . CYAN . "║\n" . RESET;
+    echo CYAN . "║" . WHITE . "  3. Add Account" . str_repeat(" ", 45) . CYAN . "║\n" . RESET;
+    echo CYAN . "║" . WHITE . "  4. Delete Account" . str_repeat(" ", 43) . CYAN . "║\n" . RESET;
+    echo CYAN . "║" . WHITE . "  5. View Accounts" . str_repeat(" ", 43) . CYAN . "║\n" . RESET;
+    echo CYAN . "║" . WHITE . "  6. Exit" . str_repeat(" ", 52) . CYAN . "║\n" . RESET;
     echo CYAN . "╚═══════════════════════════════════════════════════════════════╝\n" . RESET;
     echo "\n";
     echo WHITE . "Choose an option: " . RESET;
@@ -222,191 +254,248 @@ function headerss(){
 }
 
 function login($email, $password = '', $proxy) {
-    $r = Run("https://gamefaucet.fun/",headers(),null,null,$proxy,0,$email);
-      
-    if ($r['info']['redirect_url'] == "https://gamefaucet.fun/dashboard") {
+    // LOGIN unchanged — still hCaptcha (only links use RSCaptcha)
+    $r = Run("https://gamefaucet.fun/", headers(), null, null, $proxy, 0, $email);
+
+    if (($r['info']['redirect_url'] ?? '') == "https://gamefaucet.fun/dashboard") {
         return true;
     }
-    
-    if ($r['info']['http_code'] == 200) {
-        $sitekey = explode('"', explode('<div class="h-captcha" data-sitekey="', $r['body'])[1])[0];
-        $cap = captcha("https://gamefaucet.fun", $sitekey, "hcaptcha");
-        
-        if (!$cap) return  false;
-        
-        $ipData = json_decode(Run("http://ip-api.com/json/?fields=query,timezone", [], null, "data", $proxy, 2, $email)['body'] ?? '{}', true);
-        $ip = $ipData['query'] ?? '';
-        $timezone = $ipData['timezone'] ?? '';
-        $ls = 'en-US,en';
-        $userAgent = SaveData(APP_HOST, 'UserAgent');
-        $utt = $timezone;
-        $uf = md5($ip . $userAgent . $ls . $utt);
-        
-        $payload = http_build_query([
-            "email" => $email,
-            "captcha" => "hcaptcha",
-            "g-recaptcha-response" => $cap['token'],
-            "h-captcha-response" => $cap['token'],
-            "uf" => $uf,
-            "utt" => $utt,
-            "ls" => $ls
-        ]);
-        
-        $r = Run("https://gamefaucet.fun/auth/login",headerss(),$payload,null,$proxy,0,$email);
-        
-        $r = Run("https://gamefaucet.fun",headers(),null,null,$proxy,0,$email);
 
-        if ($r['info']['redirect_url'] == "https://gamefaucet.fun/dashboard") {
+    if (($r['info']['http_code'] ?? 0) != 200) return false;
+    $body = $r['body'];
+
+    $sitekey = "";
+    if (preg_match('/data-sitekey="([^"]+)"/i', $body, $m)) $sitekey = $m[1];
+    if (!$sitekey && preg_match('/h-captcha[^>]*data-sitekey="([^"]+)"/i', $body, $m)) $sitekey = $m[1];
+    if (!$sitekey) return false;
+
+    $cap = captcha("https://gamefaucet.fun", $sitekey, "hcaptcha");
+    $tok = null;
+    if (is_array($cap)) $tok = $cap['token'] ?? $cap['request'] ?? null;
+    if (!$tok) return false;
+
+    $ipData = json_decode(Run("http://ip-api.com/json/?fields=query,timezone", [], null, "data", $proxy, 2, $email)['body'] ?? '{}', true);
+    $ip = $ipData['query'] ?? '';
+    $timezone = $ipData['timezone'] ?? '';
+    $ls = 'en-US,en';
+    $userAgent = function_exists('SaveData') ? SaveData(APP_HOST, 'UserAgent') : (saveData(APP_HOST, 'user-agent') ?: 'Mozilla/5.0');
+    $utt = $timezone;
+    $uf = md5($ip . $userAgent . $ls . $utt);
+
+    $payload = http_build_query([
+        "email" => $email,
+        "password" => $password,
+        "captcha" => "hcaptcha",
+        "g-recaptcha-response" => $tok,
+        "h-captcha-response" => $tok,
+        "uf" => $uf,
+        "utt" => $utt,
+        "ls" => $ls,
+    ]);
+
+    Run("https://gamefaucet.fun/auth/login", headerss(), $payload, null, $proxy, 0, $email);
+    $r2 = Run("https://gamefaucet.fun/", headers(), null, null, $proxy, 0, $email);
+    if (($r2['info']['redirect_url'] ?? '') == "https://gamefaucet.fun/dashboard") return true;
+    if (strpos($r2['body'] ?? '', 'logout') !== false) return true;
+    return false;
+}
+
+
+function shortlink($email, $proxy, $coin = "") {
+    // Unlock / links pages that require rscaptcha (not hcaptcha)
+    $urls = [
+        "https://gamefaucet.fun/links",
+        "https://gamefaucet.fun/link",
+        "https://gamefaucet.fun/shortlink",
+        "https://gamefaucet.fun/shortlinks",
+    ];
+    if ($coin) {
+        $urls[] = "https://gamefaucet.fun/faucet/$coin";
+    }
+
+    foreach ($urls as $url) {
+        $r = Run($url, headers(), null, null, $proxy, 0, $email);
+        if (($r['info']['http_code'] ?? 0) != 200) continue;
+        $body = $r['body'] ?? "";
+        if (strpos($body, "rscaptcha") === false && strpos($body, "rscaptcha_token") === false) continue;
+
+        $csrf = "";
+        $token = "";
+        $rscaptcha_token = "";
+        if (preg_match('/name="ci_csrf_token"[^>]*value="([^"]*)"/i', $body, $m)) $csrf = $m[1];
+        if (preg_match('/name="token"[^>]*value="([^"]*)"/i', $body, $m)) $token = $m[1];
+        if (preg_match('/name="rscaptcha_token"[^>]*value="([^"]*)"/i', $body, $m)) $rscaptcha_token = $m[1];
+
+        echo "\n";
+        echo CYAN . "┌" . str_repeat("─", 61) . "┐\n" . RESET;
+        echo CYAN . "│" . WHITE . "  🔗  LINK / SHORTLINK CLAIM" . str_repeat(" ", 33) . CYAN . "│\n" . RESET;
+        echo CYAN . "├" . str_repeat("─", 61) . "┤\n" . RESET;
+        echo CYAN . "│" . WHITE . "  Captcha     : " . YELLOW . "RSCaptcha solving..." . RESET . str_repeat(" ", 24) . CYAN . "│\n" . RESET;
+
+        $cap = rs_upsidedown($body, "https://rscaptcha.com/assets/generated_captcha/");
+        $resp = $cap['rs-response'] ?? null;
+        if (!$resp) {
+            echo CYAN . "│" . WHITE . "  Status      : " . RED . "RSCaptcha failed" . RESET . str_repeat(" ", 28) . CYAN . "│\n" . RESET;
+            echo CYAN . "└" . str_repeat("─", 61) . "┘\n" . RESET;
+            continue;
+        }
+        echo CYAN . "│" . WHITE . "  Captcha     : " . GREEN . "RSCaptcha Len " . strlen($resp) . RESET . str_repeat(" ", max(1, 28 - strlen((string)strlen($resp)))) . CYAN . "│\n" . RESET;
+
+        // Exact field set from live POST (links)
+        $payload = http_build_query([
+            "ci_csrf_token" => $csrf,
+            "token" => $token,
+            "captcha" => "rscaptcha",
+            "rscaptcha_token" => $rscaptcha_token,
+            "rscaptcha_response" => $resp,
+        ]);
+
+        $postUrl = "https://gamefaucet.fun/links/verify";
+        if (strpos($url, "/faucet/") !== false) {
+            $postUrl = "https://gamefaucet.fun/faucet/verify";
+        } elseif (strpos($url, "shortlink") !== false) {
+            $postUrl = "https://gamefaucet.fun/shortlink/verify";
+        }
+
+        $pr = Run($postUrl, headerss(), $payload, null, $proxy, 0, $email);
+        $msg = "";
+        if (preg_match("/text:\s*'([^']+)'/", $pr['body'] ?? "", $m)) $msg = $m[1];
+        if (!$msg && preg_match('/alert[^>]*>([^<]+)/i', $pr['body'] ?? "", $m)) $msg = trim($m[1]);
+
+        if ($msg && (stripos($msg, "success") !== false || stripos($msg, "earn") !== false || stripos($msg, "claim") !== false || stripos($msg, "unlock") !== false)) {
+            $GLOBALS['shortlink_claims']++;
+            $GLOBALS['shortlink_totalclaims']++;
+            echo CYAN . "│" . WHITE . "  Status      : " . GREEN . "SUCCESS" . RESET . str_repeat(" ", 36) . CYAN . "│\n" . RESET;
+            echo CYAN . "│" . WHITE . "  Reward      : " . GREEN . $msg . RESET . str_repeat(" ", max(1, 42 - strlen($msg))) . CYAN . "│\n" . RESET;
+            echo CYAN . "└" . str_repeat("─", 61) . "┘\n" . RESET;
             return true;
         }
+        echo CYAN . "│" . WHITE . "  Status      : " . YELLOW . substr($msg ?: "posted", 0, 40) . RESET . str_repeat(" ", 20) . CYAN . "│\n" . RESET;
+        echo CYAN . "└" . str_repeat("─", 61) . "┘\n" . RESET;
+        return true; // stop redirect loop after attempt
     }
     return false;
 }
 
 function faucet($email, $proxy) {
-  
+    // Single account = keep claiming forever (Ctrl+C to stop)
     $coins = ['ltc','usdt','dgb','sol','fey','pepe','doge'];
-    foreach($coins as $coin){
+    $cycle = 0;
+
     while (true) {
-    
-        $r = Run("https://gamefaucet.fun/faucet/$coin",headers(),null,null,$proxy,0,$email);
+        $cycle++;
+        $anyClaim = false;
+        $allCooldown = true;
 
-        if ($r['info']['redirect_url']) {shortlink($email, $proxy,$coin);continue;}
-    
-    if ($r['info']['http_code'] == 200) {
-        $body = $r['body'];
-        
-      
-        $timer = 0;
-        if (preg_match('/let\s+wait\s*=\s*(\d+)/', $body, $m)) {
-            $timer = intval($m[1]);
-        } elseif (preg_match('/var\s+wait\s*=\s*(\d+)/', $body, $m)) {
-            $timer = intval($m[1]);
-        } elseif (preg_match('/countdown\s*\(\s*(\d+)\s*\)/', $body, $m)) {
-            $timer = intval($m[1]);
+        if (defined("CYAN")) {
+            echo "\n" . CYAN . "── Cycle " . $cycle . " · " . $email . " ──\n" . RESET;
         }
-        
-        if ($timer) {countdown($timer,"⏳ Waiting ");continue;}
-        
-        // Extract form tokens
-            $csrf = explode('"', explode('<input type="hidden" name="ci_csrf_token" id="token" value="', $body)[1])[0];
-            $token = explode('"', explode('<input type="hidden" name="token" value="', $body)[1])[0];
-            $cur = explode('"', explode('<input type="hidden" name="currency" value="', $body)[1])[0];
-            $rscaptcha_token = explode('"', explode('<input type="hidden" name="rscaptcha_token" value="', $body)[1])[0];
-            $captcha = rs_upsidedown($body, "https://rscaptcha.com/assets/generated_captcha/");
-        
-            if (!$captcha['rs-response']) {continue;}
-            $ipData = json_decode(Run("http://ip-api.com/json/?fields=query,timezone", [], null, "data", $proxy, 2, $email)['body'] ?? '{}', true);
-            $ip = $ipData['query'] ?? '';
-            $timezone = $ipData['timezone'] ?? '';
-            $ls = 'en-US,en';
-            $userAgent = SaveData(APP_HOST, 'UserAgent');
-            $utt = $timezone;
-            $uf = md5($ip . $userAgent . $ls . $utt);
-        
-            $payload = http_build_query(["ci_csrf_token" => $csrf,"token" => $token,"currency" => $cur,"captcha" => "rscaptcha","rscaptcha_token" => $rscaptcha_token,"rscaptcha_response" => $captcha['rs-response'],"uf" => $uf,"utt" => $utt,"ls" => $ls]);
-        
-            $r = Run("https://gamefaucet.fun/faucet/verify",headerss(),$payload,null,$proxy,0,$email);
-        
-            $r = Run("https://gamefaucet.fun/faucet/$coin",headers(),null,null,$proxy,0,$email);
-    
-            $msg = explode("',", explode("text: '", $r['body'])[1])[0] ?? '';
 
-            if($msg == "The faucet does not have sufficient funds for this transaction."){
-                break;
+        foreach ($coins as $coin) {
+            $r = Run("https://gamefaucet.fun/faucet/$coin", headers(), null, null, $proxy, 0, $email);
+
+            if (!empty($r['info']['redirect_url'])) {
+                shortlink($email, $proxy, $coin);
+                $allCooldown = false;
+                continue;
             }
-        
+
+            if (($r['info']['http_code'] ?? 0) != 200) {
+                sleep(2);
+                continue;
+            }
+
+            $body = $r['body'] ?? "";
+
+            $timer = 0;
+            if (preg_match('/let\s+wait\s*=\s*(\d+)/', $body, $m)) $timer = intval($m[1]);
+            elseif (preg_match('/var\s+wait\s*=\s*(\d+)/', $body, $m)) $timer = intval($m[1]);
+            elseif (preg_match('/countdown\s*\(\s*(\d+)\s*\)/', $body, $m)) $timer = intval($m[1]);
+            if ($timer > 0) {
+                // still on timer for this coin — skip to next coin
+                continue;
+            }
+            $allCooldown = false;
+
+            $csrf = "";
+            $token = "";
+            $cur = $coin;
+            $rscaptcha_token = "";
+            if (preg_match('/name="ci_csrf_token"[^>]*value="([^"]*)"/i', $body, $m)) $csrf = $m[1];
+            if (preg_match('/name="token"[^>]*value="([^"]*)"/i', $body, $m)) $token = $m[1];
+            if (preg_match('/name="currency"[^>]*value="([^"]*)"/i', $body, $m)) $cur = $m[1];
+            if (preg_match('/name="rscaptcha_token"[^>]*value="([^"]*)"/i', $body, $m)) $rscaptcha_token = $m[1];
+
+            if ($rscaptcha_token === "" && strpos($body, "rscaptcha") === false) {
+                continue;
+            }
+
+            echo "\n";
+            echo CYAN . "┌" . str_repeat("─", 61) . "┐\n" . RESET;
+            echo CYAN . "│" . WHITE . "  💧  FAUCET CLAIM · " . strtoupper($coin) . str_repeat(" ", max(1, 38 - strlen($coin))) . CYAN . "│\n" . RESET;
+            echo CYAN . "├" . str_repeat("─", 61) . "┤\n" . RESET;
+            echo CYAN . "│" . WHITE . "  Captcha     : " . YELLOW . "RSCaptcha solving..." . RESET . str_repeat(" ", 24) . CYAN . "│\n" . RESET;
+
+            $captcha = rs_upsidedown($body, "https://rscaptcha.com/assets/generated_captcha/");
+            if (empty($captcha['rs-response'])) {
+                echo CYAN . "│" . WHITE . "  Status      : " . RED . "RSCaptcha failed" . RESET . str_repeat(" ", 28) . CYAN . "│\n" . RESET;
+                echo CYAN . "└" . str_repeat("─", 61) . "┘\n" . RESET;
+                sleep(2);
+                continue;
+            }
+            $rsResp = $captcha['rs-response'];
+            echo CYAN . "│" . WHITE . "  Captcha     : " . GREEN . "RSCaptcha OK" . RESET . str_repeat(" ", 31) . CYAN . "│\n" . RESET;
+            echo CYAN . "│" . WHITE . "  Token Len   : " . GREEN . strlen($rsResp) . RESET . str_repeat(" ", max(1, 42 - strlen((string)strlen($rsResp)))) . CYAN . "│\n" . RESET;
+            echo CYAN . "│" . WHITE . "  Token       : " . GREY . substr($rsResp, 0, 28) . "..." . RESET . str_repeat(" ", 14) . CYAN . "│\n" . RESET;
+
+            $payload = http_build_query([
+                "ci_csrf_token" => $csrf,
+                "token" => $token,
+                "currency" => $cur,
+                "captcha" => "rscaptcha",
+                "rscaptcha_token" => $rscaptcha_token,
+                "rscaptcha_response" => $rsResp,
+            ]);
+
+            Run("https://gamefaucet.fun/faucet/verify", headerss(), $payload, null, $proxy, 0, $email);
+            $r2 = Run("https://gamefaucet.fun/faucet/$coin", headers(), null, null, $proxy, 0, $email);
+            $msg = "";
+            if (preg_match("/text:\s*'([^']+)'/", $r2['body'] ?? "", $m)) $msg = $m[1];
+            if (!$msg && preg_match('/class="[^"]*alert[^"]*"[^>]*>([^<]+)/i', $r2['body'] ?? "", $m)) $msg = trim(strip_tags($m[1]));
+
+            if ($msg == "The faucet does not have sufficient funds for this transaction.") {
+                echo CYAN . "│" . WHITE . "  Status      : " . YELLOW . "insufficient funds" . RESET . str_repeat(" ", 26) . CYAN . "│\n" . RESET;
+                echo CYAN . "└" . str_repeat("─", 61) . "┘\n" . RESET;
+                continue;
+            }
+
             $GLOBALS['faucet_totalclaims']++;
             if ($msg) {
-                $GLOBALS['failed'] = 0;
-                $claimCount++;
                 $GLOBALS['faucet_claims']++;
-                echo WHITE . '[ ' . GREEN . $GLOBALS['faucet_claims'] . WHITE . " / " . YELLOW . $GLOBALS['faucet_totalclaims'] . WHITE . ' ] ' . GREEN . $msg . WHITE . " | " . YELLOW . get_balance() . RESET .  "\n";
-                sleep(5);
-            }else{
-            $GLOBALS['failed']++;
-            if($GLOBALS['failed'] == 3){
-                exit("3 Incorrect Claims\n");
-                }
+                $anyClaim = true;
+                echo CYAN . "│" . WHITE . "  Status      : " . GREEN . "SUCCESS" . RESET . str_repeat(" ", 36) . CYAN . "│\n" . RESET;
+                echo CYAN . "│" . WHITE . "  Reward      : " . GREEN . substr($msg, 0, 40) . RESET . str_repeat(" ", max(1, 42 - strlen(substr($msg, 0, 40)))) . CYAN . "│\n" . RESET;
+                echo CYAN . "└" . str_repeat("─", 61) . "┘\n" . RESET;
+                $bal = function_exists('get_balance') ? get_balance() : "-";
+                logClaim($GLOBALS['faucet_claims'], $GLOBALS['faucet_totalclaims'], $msg, $bal, null, [
+                    "Type" => "RSCaptcha",
+                    "Token Len" => isset($resp) ? strlen($resp) : (isset($tokenLen) ? $tokenLen : 0),
+                    "Token" => isset($resp) ? (substr($resp, 0, 18) . "...") : (isset($tokenPreview) ? $tokenPreview : ""),
+                ]);
+            } else {
+                echo CYAN . "│" . WHITE . "  Status      : " . YELLOW . "no message" . RESET . str_repeat(" ", 33) . CYAN . "│\n" . RESET;
+                echo CYAN . "└" . str_repeat("─", 61) . "┘\n" . RESET;
             }
+            sleep(mt_rand(3, 6));
         }
+
+        // All coins on cooldown or nothing left — wait then full cycle again
+        $wait = $anyClaim ? mt_rand(30, 60) : mt_rand(90, 180);
+        if (defined("YELLOW")) {
+            echo YELLOW . "⏳ All coins done this cycle · next round in " . $wait . "s (Ctrl+C stop)\n" . RESET;
+        }
+        sleep($wait);
     }
-}
-}
-
-function shortlink($email, $proxy,$coin) {
-    while (true) {
-    $r = Run("https://gamefaucet.fun/links/$coin",headers(),null,null,$proxy,0,$email);
-
-    preg_match_all('/<h5>(.*?)<\/h5>/', $r['body'], $names);
-    preg_match_all('/<\/i>\s*(\d+)\/\d+\s*<\/div>/', $r['body'], $claims);
-    preg_match_all('/<a href="(.*?)" class="btn_sl" >Click To Visit<\/a>/', $r['body'], $urls);
-
-    $items = [];
-    foreach ($names[1] as $index => $name) {
-        $items[] = [
-            'name'  => trim($name),
-            'claim' => $claims[1][$index] ?? null,
-            'link'  => $urls[1][$index] ?? null
-        ];
-    }
-
-
-    foreach ($items as $detail) {
-        $url = $detail['link'];
-        $host = parse_url($url, PHP_URL_HOST);
-
-        if ($host !== 'gamefaucet.fun') continue;
-
-        $allowed = ['Adlink', 'Shrinkme', 'Clksh', 'Shrinkearn'];
-        $nameOk = false;
-        foreach ($allowed as $needle) {
-            if (stripos($detail['name'], $needle) !== false) {
-                $nameOk = true;
-                break;
-            }
-        }
-        if (!$nameOk) continue;
-        $r = Run($url,headers(),null,null,$proxy,0,$email);
-
-        $sitekey = explode('"', explode('<div class="h-captcha" data-sitekey="', $r['body'])[1])[0];
-        $cap = captcha($url, $sitekey, "hcaptcha")['token'];
-        if (!$cap) return;
-
-        $csrf = explode('"', explode('<input type="hidden" name="ci_csrf_token" id="token" value="', $r['body'])[1])[0];
-        $token = explode('"', explode('<input type="hidden" name="token" value="', $r['body'])[1])[0];
-
-        $payload = http_build_query([
-            "ci_csrf_token" => $csrf,
-            "token" => $token,
-            "captcha" => "hcaptcha",
-            "g-recaptcha-response" => $cap,
-            "h-captcha-response" => $cap
-        ]);
-        $r = Run($url,headerss(),$payload,null,$proxy,0,$email);
-
-        $redirect = $r['info']['redirect_url'];
-        $bypass = Bypass($redirect);
-        if ($bypass['token']) {
-            countdown(rand(45,60), "");
-            $r = Run($bypass['token'],headers(),null,null,$proxy,0,$email);
-            if ($r['info']['redirect_url']) {
-                $r = Run($r['info']['redirect_url'],headers(),null,null,$proxy,0,$email);
-                if ($r['info']['redirect_url']) {
-                    $r = Run($r['info']['redirect_url'],headers(),null,null,$proxy,0,$email);
-                }
-            }
-        }
-        $msg = explode("',", explode("text: '", $r['body'])[1])[0] ?? '';
-
-        $GLOBALS['shortlink_totalclaims']++;
-        if ($msg) {
-            $GLOBALS['shortlink_claims']++;
-            echo WHITE . '[ ' . GREEN . $GLOBALS['shortlink_claims'] . WHITE . " / " . YELLOW . $GLOBALS['shortlink_totalclaims'] . WHITE . ' ] ' . '| ' . WHITE . $redirect . ' | ' . GREEN . $msg . RESET . "\n";
-            return;
-        }
-    }
-}
 }
 
 
@@ -414,27 +503,58 @@ function runAccount($account) {
     $email = $account['email'];
     $password = isset($account['password']) ? $account['password'] : '';
     $proxy = isset($account['proxy']) ? $account['proxy'] : null;
-    
-    echo "\n" . CYAN . "═══════════════════════════════════════════════════════════════\n" . RESET;
-    echo WHITE . "  👤 Running account: " . GREEN . $email . RESET . "\n";
-    if ($proxy) {
-        echo WHITE . "  🌐 Proxy: " . CYAN . $proxy . RESET . "\n";
+    $GLOBALS['__run_password'] = $password;
+    $GLOBALS['faucet_claims'] = 0;
+    $GLOBALS['faucet_totalclaims'] = 0;
+
+    if (function_exists("themeAccount")) {
+        $ex = [];
+        if (empty($password)) $ex["Note"] = YELLOW . "No password set" . RESET;
+        themeAccount($email, $proxy ?? null, $ex);
     }
-    if (empty($password)) {
-        echo YELLOW . "  ⚠️  No password set for this account\n" . RESET;
-    }
-    echo CYAN . "═══════════════════════════════════════════════════════════════\n" . RESET;
-    
-    $login = login($email, $password, $proxy);
-    if($login){
-        echo GREEN . "✓ Login Successful\n" . RESET;
-        $GLOBALS['faucet_claims'] = 0;
-        $GLOBALS['faucet_totalclaims'] = 0;
-        faucet($email, $proxy);
-    } else {
-        echo RED . "✗ Login Failed for: " . $email . "\n" . RESET;
+
+    // ===== SINGLE ACCOUNT LOOP — never returns to menu (Ctrl+C to stop) =====
+    while (true) {
+        $login = login($email, $password, $proxy);
+        if (!$login) {
+            if (function_exists("themeLogin")) {
+                themeLogin(false, $email, ["Account" => GREEN . $email . RESET, "Next" => YELLOW . "retry in 15s" . RESET]);
+            } else {
+                echo RED . "Login failed — retry 15s\n" . RESET;
+            }
+            sleep(15);
+            continue;
+        }
+        if (function_exists("themeLogin")) {
+            themeLogin(true, "", ["Account" => GREEN . $email . RESET, "Mode" => WHITE . "Single loop" . RESET]);
+        } else {
+            echo GREEN . "Login OK\n" . RESET;
+        }
+
+        // faucet() is also while(true); if it ever returns, we re-login and continue
+        if (function_exists("faucet")) {
+            faucet($email, $proxy);
+        }
+        // also run other earners if present (ptc/shortlink) once per outer cycle
+        if (function_exists("ptc")) {
+            try { ptc($email, $proxy); } catch (Throwable $e) {}
+        }
+        if (function_exists("shortlink")) {
+            try { shortlink($email, $proxy); } catch (Throwable $e) {}
+        }
+
+        if (function_exists("themeStatus")) {
+            themeStatus("🔄  NEXT CYCLE", [
+                "Account" => GREEN . $email . RESET,
+                "Action"  => WHITE . "Re-check in 5s (Ctrl+C to stop)" . RESET,
+            ]);
+        } else {
+            echo CYAN . "🔄 Next cycle in 5s...\n" . RESET;
+        }
+        sleep(5);
     }
 }
+
 
 
 // ============================================
@@ -458,16 +578,22 @@ while(true) {
         }
         
         switch($option) {
-            case '1': // Run Account
+            case '1': // Run Account (Single)
                 $account = selectAccount();
                 if ($account) {
                     runAccount($account);
-                    echo "\n" . WHITE . "Press Enter to continue..." . RESET;
-                    fgets(STDIN);
+                    // single account loops forever — no Press Enter
+                    break;
                 }
                 break;
+
+            case '2': // Run All Accounts (Smart)
+                runAllAccountsSmart();
+                echo "\n" . WHITE . "Press Enter to continue..." . RESET;
+                fgets(STDIN);
+                break;
                 
-            case '2': // Add Account
+            case '3': // Add Account
                 echo WHITE . "Enter email: " . RESET;
                 $email = trim(fgets(STDIN));
                 if (empty($email)) {
@@ -491,7 +617,7 @@ while(true) {
                 fgets(STDIN);
                 break;
                 
-            case '3': // Delete Account
+            case '4': // Delete Account
                 $accounts = loadAccounts();
                 if (empty($accounts)) {
                     echo YELLOW . "No accounts to delete.\n" . RESET;
@@ -509,13 +635,13 @@ while(true) {
                 fgets(STDIN);
                 break;
                 
-            case '4': // View Accounts
+            case '5': // View Accounts
                 displayAccounts();
                 echo "\n" . WHITE . "Press Enter to continue..." . RESET;
                 fgets(STDIN);
                 break;
                 
-            case '5': // Exit
+            case '6': // Exit
                 echo GREEN . "Goodbye!\n" . RESET;
                 exit(0);
                 break;

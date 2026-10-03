@@ -21,111 +21,8 @@ function get_balance() {
     return null;
 }
 
-
-/**
- * Captcha API error codes → meaning + action
- */
-function captchaErrorInfo($code) {
-    $code = strtoupper(trim((string)$code));
-    $map = [
-        "CAPCHA_NOT_READY"         => ["Still solving", "Poll again"],
-        "CAPTCHA_NOT_READY"        => ["Still solving", "Poll again"],
-        "ERROR_WRONG_USER_KEY"     => ["Invalid key", "Check anticaptcha / vernuable key"],
-        "ERROR_KEY_DOES_NOT_EXIST" => ["Unknown key", "Regenerate / use linked account key"],
-        "ERROR_ZERO_BALANCE"       => ["No balance", "Deposit funds on captcha provider"],
-        "ERROR_INVALID_METHOD"     => ["Unknown method", "Use: turnstile, iuam, adslab, antibot, hcaptcha"],
-        "ERROR_WRONG_CAPTCHA_ID"   => ["Bad or expired job id", "Submit a new task"],
-        "ERROR_CAPTCHA_UNSOLVABLE" => ["Failed to solve", "Retry"],
-        "ERROR_NO_SLOT_AVAILABLE"  => ["No solver slot", "Wait and retry"],
-        "TIMEOUT"                  => ["Poll timeout", "Retry task"],
-    ];
-    if (isset($map[$code])) {
-        return ["code" => $code, "meaning" => $map[$code][0], "action" => $map[$code][1]];
-    }
-    if (strpos($code, "ERROR_") === 0) {
-        return ["code" => $code, "meaning" => "API error", "action" => "Check key / balance / method"];
-    }
-    return ["code" => $code, "meaning" => "Unknown", "action" => "Retry or check logs"];
-}
-
-function captchaLogError($code) {
-    $info = captchaErrorInfo($code);
-    $msg = $info["code"] . " · " . $info["meaning"] . " → " . $info["action"];
-    if (function_exists("themeStatus")) {
-        themeStatus("❌  CAPTCHA ERROR", [
-            "Code"    => YELLOW . $info["code"] . RESET,
-            "Meaning" => RED . $info["meaning"] . RESET,
-            "Action"  => WHITE . $info["action"] . RESET,
-        ]);
-    } elseif (defined("RED") && defined("YELLOW") && defined("RESET")) {
-        echo RED . "✖ Captcha: " . YELLOW . $msg . RESET . "\n";
-    } else {
-        echo "✖ Captcha: $msg\n";
-    }
-    return $info;
-}
-
-
-/** Echo captcha status into live box when open, else normal line */
-function captchaEcho($msg, $kind = "wait") {
-    // Compact: one updating line (no spam). Final OK prints once with newline.
-    $plain = preg_replace('/\033\[[0-9;]*m/', '', (string)$msg);
-    $color = defined("YELLOW") ? YELLOW : "";
-    if ($kind === "ok" && defined("GREEN")) $color = GREEN;
-    if ($kind === "err" && defined("RED")) $color = RED;
-    $reset = defined("RESET") ? RESET : "";
-
-    // Inside open claim box — one status row only (overwrite via same label)
-    if (!empty($GLOBALS["theme_box_open"]) && function_exists("themeRow") && $kind !== "ok") {
-        // throttle repeated wait rows: only print every 3rd or on change
-        static $lastBoxMsg = "";
-        if ($plain === $lastBoxMsg) return;
-        $lastBoxMsg = $plain;
-        $label = "Status";
-        themeRow($label, $color . $plain . $reset);
-        return;
-    }
-    if (!empty($GLOBALS["theme_box_open"]) && function_exists("themeRow") && $kind === "ok") {
-        themeRow("Captcha", $color . $plain . $reset);
-        return;
-    }
-
-    // Outside box: single-line animation with \r (does not stack)
-    if ($kind === "wait") {
-        $line = $color . $plain . $reset;
-        // pad/clear previous longer line
-        echo "\r" . $line . str_repeat(" ", max(0, 12)) . "\r";
-        if (function_exists("flush")) @flush();
-        return;
-    }
-    // OK / ERR: clear wait line then print final
-    echo "\r" . str_repeat(" ", 80) . "\r";
-    if ($color) echo $color . $plain . $reset . "\n";
-    else echo $plain . "\n";
-}
-
-/** Live countdown on one line while waiting for solver slot */
-function captchaWaitAnim($seconds, $label = "⏳ Slot busy · retry") {
-    $seconds = max(1, (int)$seconds);
-    $color = defined("YELLOW") ? YELLOW : "";
-    $reset = defined("RESET") ? RESET : "";
-    if (!empty($GLOBALS["theme_box_open"]) && function_exists("themeRow")) {
-        themeRow("Status", $color . $label . " {$seconds}s" . $reset);
-        sleep($seconds);
-        return;
-    }
-    for ($s = $seconds; $s >= 1; $s--) {
-        $line = $color . $label . " · {$s}s   " . $reset;
-        echo "\r" . $line;
-        if (function_exists("flush")) @flush();
-        sleep(1);
-    }
-    echo "\r" . str_repeat(" ", 70) . "\r";
-}
-
-
 function poll($id) {
-    $maxTries = 40;
+    $maxTries = 30;
     for ($i = 1; $i <= $maxTries; $i++) {
         $json = json_encode([
             "key"    => anticaptcha_key,
@@ -134,290 +31,81 @@ function poll($id) {
             "json"   => "1",
         ]);
         $r = json_decode(Run(api_res, ["Content-Type: application/json"], $json)['body'], true);
-        if (!is_array($r)) {
-            $r = ["status" => 0, "request" => "ERROR_INVALID_RESPONSE"];
-        }
-
-        $req = (string)($r["request"] ?? "");
-        $status = (int)($r["status"] ?? 0);
 
         // ready
-        if ($status === 1) {
-            if (!empty($r["request"]) && is_string($r["request"]) && isset($r["request"][0]) && $r["request"][0] === "{") {
-                $j = json_decode($r["request"], true);
+        if (isset($r["status"]) && (int)$r["status"] === 1) {
+            // map request JSON (x/y, iuam, etc.)
+            if (!empty($r['request']) && is_string($r['request']) && $r['request'][0] === '{') {
+                $j = json_decode($r['request'], true);
                 if (is_array($j)) {
                     $r = array_merge($r, $j);
                 }
             }
-            if (empty($r["order"]) && !empty($r["request"]) && is_string($r["request"])
-                && preg_match('/^\s*\d+(\s+\d+)+\s*$/', $r["request"])) {
-                $r["order"] = trim($r["request"]);
+            // antibot order string "3 1 2"
+            if (empty($r['order']) && !empty($r['request']) && is_string($r['request'])
+                && preg_match('/^\s*\d+(\s+\d+)+\s*$/', $r['request'])) {
+                $r['order'] = trim($r['request']);
             }
-            if (empty($r["token"]) && !empty($r["request"]) && is_string($r["request"])
-                && isset($r["request"][0]) && $r["request"][0] !== "{") {
-                $reqStr = (string)$r["request"];
-                $reqUp = strtoupper($reqStr);
-                // Do NOT promote error codes to token
-                if (strpos($reqUp, "ERROR_") !== 0 && $reqUp !== "CAPCHA_NOT_READY" && $reqUp !== "TIMEOUT") {
-                    $r["token"] = $reqStr;
-                }
-                if ((function_exists("str_starts_with") && str_starts_with($reqStr, "http"))
-                    || strpos($reqStr, "http") === 0) {
-                    $r["original_url"] = $reqStr;
+            // shortlink / token
+            if (empty($r['token']) && !empty($r['request']) && is_string($r['request'])
+                && $r['request'][0] !== '{') {
+                $r['token'] = $r['request'];
+                if (str_starts_with($r['request'], 'http')) {
+                    $r['original_url'] = $r['request'];
                 }
             }
-            if (empty($r["cookie"]) && !empty($r["cf_clearance"])) {
-                $r["cookie"] = $r["cf_clearance"];
+            // IUAM
+            if (empty($r['cookie']) && !empty($r['cf_clearance'])) {
+                $r['cookie'] = $r['cf_clearance'];
             }
             return $r;
         }
 
-        // still solving → poll again
-        if ($req === "CAPCHA_NOT_READY" || $req === "CAPTCHA_NOT_READY") {
-            if (function_exists("animation")) {
-                animation("🧩 Solving captcha...");
-            }
+        // pending
+        if (($r['request'] ?? '') === 'CAPCHA_NOT_READY' || ($r['status'] ?? '') === 0 && ($r['request'] ?? '') === 'CAPCHA_NOT_READY') {
+            animation("[$id] Getting Captcha...");
             sleep(3);
             continue;
         }
 
-        // soft: no slot → wait and keep trying (do NOT fail user login)
-        $reqUp = strtoupper($req);
-        if ($reqUp === "ERROR_NO_SLOT_AVAILABLE" || strpos($reqUp, "NO_SLOT") !== false) {
-            $wait = min(15, 3 + $i * 2);
-            if (defined("YELLOW") && defined("RESET")) {
-                captchaEcho("⏳ No solver slot · waiting {$wait}s then retry... (" . $i . "/" . $maxTries . ")", "wait");
-            }
-            sleep($wait);
-            continue;
-        }
-
-        // soft: unsolvable on poll → stop this job (caller will resubmit) — no scary error box
-        if ($reqUp === "ERROR_CAPTCHA_UNSOLVABLE") {
-            if (defined("YELLOW") && defined("RESET")) {
-                captchaEcho("⏳ Captcha unsolvable · will resubmit new task...", "wait");
-            }
-            $r["error_info"] = captchaErrorInfo($req);
-            $r["success"] = false;
-            $r["retryable"] = true;
-            return $r;
-        }
-
-        // fatal key/balance/method — stop for real
-        $fatal = [
-            "ERROR_WRONG_USER_KEY",
-            "ERROR_KEY_DOES_NOT_EXIST",
-            "ERROR_ZERO_BALANCE",
-            "ERROR_INVALID_METHOD",
-            "ERROR_WRONG_CAPTCHA_ID",
-        ];
-        if (in_array($reqUp, $fatal, true)) {
-            captchaLogError($req);
-            $r["error_info"] = captchaErrorInfo($req);
-            $r["success"] = false;
-            $r["retryable"] = false;
-            return $r;
-        }
-
-        // other ERROR_* — brief wait then continue a few times
-        if (strpos($reqUp, "ERROR_") === 0) {
-            if ($i < 8) {
-                $wait = 3 + $i;
-                if (defined("YELLOW") && defined("RESET")) {
-                    captchaEcho("⏳ " . $reqUp . " · wait {$wait}s retry...", "wait");
-                }
-                sleep($wait);
-                continue;
-            }
-            captchaLogError($req);
-            $r["error_info"] = captchaErrorInfo($req);
-            $r["success"] = false;
-            return $r;
-        }
-
-        if ($i < 5) {
-            sleep(2);
-            continue;
-        }
-        captchaLogError($req !== "" ? $req : "UNKNOWN");
-        $r["error_info"] = captchaErrorInfo($req !== "" ? $req : "UNKNOWN");
+        // error
         return $r;
     }
-    captchaLogError("TIMEOUT");
-    return ["status" => 0, "request" => "TIMEOUT", "error_info" => captchaErrorInfo("TIMEOUT"), "success" => false];
+    return ["status" => 0, "request" => "TIMEOUT"];
 }
 
-
 function captcha($url, $sitekey, $method, $action = null) {
-    $maxSubmit = 8;
-    $last = null;
-
-    for ($attempt = 1; $attempt <= $maxSubmit; $attempt++) {
-        $json = [
-            "key"     => anticaptcha_key,
-            "method"  => $method,
-            "pageurl" => $url,
-            "domain"  => $url,
-            "sitekey" => $sitekey,
-            "siteKey" => $sitekey,
-            "json"    => "1",
-        ];
-        if ($action) {
-            $json["action"] = $action;
-        }
-
-        $r = json_decode(Run(api_in, ["Content-Type: application/json"], json_encode($json))["body"], true);
-        if (!is_array($r)) {
-            $last = ["status" => 0, "request" => "ERROR_INVALID_RESPONSE", "success" => false];
-            if ($attempt < $maxSubmit) {
-                sleep(3);
-                continue;
-            }
-            captchaLogError("ERROR_INVALID_RESPONSE");
-            return $last;
-        }
-
-        // job created → poll
-        if (isset($r["request"]) && (int)($r["status"] ?? 0) === 1) {
-            $result = poll($r["request"]);
-            // poll success
-            if (is_array($result) && (int)($result["status"] ?? 0) === 1) {
-                $tok = (string)($result["token"] ?? $result["request"] ?? "");
-                // Never treat API error codes as tokens (e.g. ERROR_NO_SLOT_AVAILABLE = len 23)
-                $tokUp = strtoupper(trim($tok));
-                $isErr = ($tok === "" || strpos($tokUp, "ERROR_") === 0 || $tokUp === "CAPCHA_NOT_READY"
-                    || $tokUp === "TIMEOUT" || $tokUp === "CAPTCHA_NOT_READY");
-                $minLen = (stripos($method, "turnstile") !== false) ? 80 : 20;
-                if ($isErr || strlen($tok) < $minLen) {
-                    if (defined("YELLOW")) {
-                        captchaEcho("⏳ Bad token · " . substr($tokUp, 0, 40) . " · retry", "wait");
-                    }
-                    $last = ["status" => 0, "request" => $tokUp ?: "BAD_TOKEN", "success" => false, "retryable" => true];
-                    if ($attempt < $maxSubmit) {
-                        sleep(3 + $attempt);
-                        continue;
-                    }
-                    captchaLogError($tokUp ?: "BAD_TOKEN");
-                    return $last;
-                }
-                $result["token"] = $tok;
-                $result["request"] = $tok;
-                $GLOBALS["last_captcha_type"] = $method;
-                $GLOBALS["last_captcha_token"] = $tok;
-                $GLOBALS["last_captcha_len"] = strlen($tok);
-                if (defined("GREEN")) {
-                    captchaEcho("✔ Captcha OK · " . $method . " · Len " . strlen($tok), "ok");
-                }
-                return $result;
-            }
-            // retryable poll failure (unsolvable / timeout)
-            $req = strtoupper((string)($result["request"] ?? ""));
-            $retryable = !empty($result["retryable"])
-                || $req === "ERROR_CAPTCHA_UNSOLVABLE"
-                || $req === "TIMEOUT"
-                || $req === "ERROR_WRONG_CAPTCHA_ID";
-            if ($retryable && $attempt < $maxSubmit) {
-                $wait = 4 + $attempt * 2;
-                if (defined("YELLOW") && defined("RESET")) {
-                    captchaEcho("⏳ Captcha retry " . $attempt . "/" . $maxSubmit . " · " . $req . " · wait {$wait}s", "wait");
-                }
-                sleep($wait);
-                $last = $result;
-                continue;
-            }
-            return is_array($result) ? $result : $r;
-        }
-
-        // create failed
-        $err = strtoupper((string)($r["request"] ?? $r["error"] ?? "SUBMIT_FAILED"));
-        $last = $r;
-
-        // NO SLOT / busy → wait and resubmit (never fail login on first no-slot)
-        if ($err === "ERROR_NO_SLOT_AVAILABLE" || strpos($err, "NO_SLOT") !== false) {
-            $wait = min(30, 5 + $attempt * 3);
-            if (defined("YELLOW") && defined("RESET")) {
-                captchaEcho("⏳ No solver slot · waiting {$wait}s then auto-retry (" . $attempt . "/" . $maxSubmit . ")", "wait");
-            }
-            sleep($wait);
-            continue;
-        }
-
-        // unsolvable on create → retry
-        if ($err === "ERROR_CAPTCHA_UNSOLVABLE" && $attempt < $maxSubmit) {
-            $wait = 3 + $attempt;
-            if (defined("YELLOW") && defined("RESET")) {
-                captchaEcho("⏳ Unsolvable · resubmit in {$wait}s (" . $attempt . "/" . $maxSubmit . ")", "wait");
-            }
-            sleep($wait);
-            continue;
-        }
-
-        // fatal key/balance — stop immediately
-        if (in_array($err, ["ERROR_WRONG_USER_KEY", "ERROR_KEY_DOES_NOT_EXIST", "ERROR_ZERO_BALANCE", "ERROR_INVALID_METHOD"], true)) {
-            captchaLogError($err);
-            $r["error_info"] = captchaErrorInfo($err);
-            $r["success"] = false;
-            return $r;
-        }
-
-        // other errors: a few retries
-        if ($attempt < $maxSubmit) {
-            $wait = 3 + $attempt;
-            if (defined("YELLOW") && defined("RESET")) {
-                captchaEcho("⏳ " . $err . " · wait {$wait}s retry (" . $attempt . "/" . $maxSubmit . ")", "wait");
-            }
-            sleep($wait);
-            continue;
-        }
-
-        captchaLogError($err);
-        $r["error_info"] = captchaErrorInfo($err);
-        $r["success"] = false;
-        return $r;
+    $json = [
+        "key"     => anticaptcha_key,
+        "method"  => $method,
+        "pageurl" => $url,
+        "domain"  => $url,
+        "sitekey" => $sitekey,
+        "siteKey" => $sitekey,
+        "json"    => "1",
+    ];
+    if ($action) {
+        $json['action'] = $action;
     }
-
-    if (is_array($last)) {
-        captchaLogError((string)($last["request"] ?? "SUBMIT_FAILED"));
-        $last["success"] = false;
-        return $last;
+    $r = json_decode(Run(api_in, ["Content-Type: application/json"], json_encode($json))['body'], true);
+    if (isset($r['request']) && (int)($r['status'] ?? 0) === 1) {
+        return poll($r['request']); // job id
     }
-    return ["status" => 0, "request" => "SUBMIT_FAILED", "success" => false];
+    return $r;
 }
 
 function upsidedown($bs64, $mode = 'upsidedown') {
-    $maxSubmit = 8;
-    for ($attempt = 1; $attempt <= $maxSubmit; $attempt++) {
-        $json = json_encode([
-            "key"    => anticaptcha_key,
-            "method" => $mode,
-            "image"  => $bs64,
-            "json"   => "1",
-        ]);
-        $r = json_decode(Run(api_in, ["Content-Type: application/json"], $json)["body"], true);
-        if (isset($r["request"]) && (int)($r["status"] ?? 0) === 1) {
-            return poll($r["request"]);
-        }
-        $err = strtoupper((string)($r["request"] ?? ""));
-        if ($err === "ERROR_NO_SLOT_AVAILABLE" || strpos($err, "NO_SLOT") !== false) {
-            $wait = min(30, 5 + $attempt * 3);
-            if (defined("YELLOW") && defined("RESET")) {
-                captchaEcho("⏳ No solver slot · waiting {$wait}s then auto-retry (" . $attempt . "/" . $maxSubmit . ")", "wait");
-            }
-            sleep($wait);
-            continue;
-        }
-        if (in_array($err, ["ERROR_WRONG_USER_KEY", "ERROR_KEY_DOES_NOT_EXIST", "ERROR_ZERO_BALANCE"], true)) {
-            captchaLogError($err);
-            return $r;
-        }
-        if ($attempt < $maxSubmit) {
-            sleep(3 + $attempt);
-            continue;
-        }
-        if ($err) captchaLogError($err);
-        return $r;
+    $json = json_encode([
+        "key"    => anticaptcha_key,
+        "method" => $mode,
+        "image"  => $bs64,
+        "json"   => "1",
+    ]);
+    $r = json_decode(Run(api_in, ["Content-Type: application/json"], $json)['body'], true);
+    if (isset($r['request']) && (int)($r['status'] ?? 0) === 1) {
+        return poll($r['request']);
     }
-    return ["status" => 0, "request" => "SUBMIT_FAILED", "success" => false];
+    return $r;
 }
 
 function solve_adslab($sitekey, $domain, $type = "static", $subid = "widget_user") {
@@ -447,7 +135,6 @@ function rotation($base, $piece, $crop) {
         "crop"   => $crop,
         "json"   => "1",
     ]);
-    
     $create = json_decode(Run(api_in, ["Content-Type: application/json"], $data)['body'], true);
     if (empty($create['request']) || (int)($create['status'] ?? 0) !== 1) {
         return ["success" => false, "message" => "Failed to create rotation job", "response" => $create];
@@ -661,11 +348,11 @@ function antibot($html) {
     if (empty($r['request']) || (int)($r['status'] ?? 0) !== 1) return null;
 
     $res = poll($r['request']);
-    if (!empty($res['order'])) {
-        return " " . trim($res['order']);
+    if (!empty($res['request'])) {
+        return " " . trim(str_replace(","," ",$res['request']));
     }
     if (!empty($res['request']) && preg_match('/^\s*\d+(\s+\d+)+\s*$/', $res['request'])) {
-        return " " . trim($res['request']);
+        return " " . trim(str_replace(","," ",$res['request']));
     }
     return null;
 }

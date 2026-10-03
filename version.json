@@ -1,16 +1,9 @@
 {
-  "version": "2.0.3",
+  "version": "2.0.4",
   "name": "BuxadsBot",
   "whats_new": [
-    "Crystal claim boxes (captcha + reward + balance)",
-    "Single account loops until Ctrl+C",
-    "Run All Accounts (Smart rotation)",
-    "Captcha: auto-retry on no slot / bad token",
-    "Earnsolana / ClaimCrypto / CryptoFuture: faucet+PTC without Turnstile",
-    "BTCAdSpace: Surf + Videos",
-    "99faucet: one coin until problem",
-    "PHP 8.5 compatible (curl_close fix)"
+    "Nothing New Old scrips Again On track"
   ],
-  "updated": "2026-09-28",
+  "updated": "2026-10-03",
   "repo": "GLITCH083/Buxads-scripts"
 }

@@ -4,7 +4,7 @@
  * 🤖 Bot Launcher - Script Manager
  * 
  * @author GLITCH083
- * @version 2.0.0
+ * @version v2.0
  */
 
 // Suppress all errors
@@ -28,7 +28,7 @@ $tokenFile = BASE_DIR . "/github_token.txt";
 if (file_exists($tokenFile)) {
     $githubToken = trim(file_get_contents($tokenFile));
 } else {
-    $githubToken = "";
+    $githubToken = "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";
 }
 
 define("GITHUB_TOKEN", $githubToken);
@@ -69,11 +69,7 @@ function githubApiRequest($endpoint) {
     
     $response = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    // curl_close() deprecated in PHP 8.5+ (handle auto-closes)
-        if (\PHP_VERSION_ID < 80500) {
-            @curl_close($ch);
-        }
-        unset($ch);
+    curl_close($ch);
     
     if ($httpCode == 200 && $response) {
         return json_decode($response, true);
@@ -108,11 +104,7 @@ function githubDownloadFile($path) {
     
     $response = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    // curl_close() deprecated in PHP 8.5+ (handle auto-closes)
-        if (\PHP_VERSION_ID < 80500) {
-            @curl_close($ch);
-        }
-        unset($ch);
+    curl_close($ch);
     
     if ($httpCode == 200 && $response) {
         return $response;
@@ -224,15 +216,11 @@ function displayUpdateInfo($current, $latest) {
     echo CYAN . "╠════════════════════════════════════════════════════════════════════════════╣\n" . RESET;
     echo CYAN . "║" . WHITE . "  📝 What's New:" . str_repeat(" ", 56) . CYAN . "║\n" . RESET;
     
-    $news = [];
-    if (isset($latest['whats_new']) && is_array($latest['whats_new'])) {
-        $news = $latest['whats_new'];
-    } elseif (isset($latest['features']) && is_array($latest['features'])) {
-        $news = $latest['features'];
-    }
-    foreach ($news as $feature) {
-        $feature = substr((string)$feature, 0, 60);
-        echo CYAN . "║  " . WHITE . "• " . $feature . str_repeat(" ", max(0, 61 - strlen($feature))) . CYAN . "║\n" . RESET;
+    if (isset($latest['features']) && is_array($latest['features'])) {
+        foreach ($latest['features'] as $feature) {
+            $feature = substr($feature, 0, 60);
+            echo CYAN . "║  " . WHITE . "• " . $feature . str_repeat(" ", 61 - strlen($feature)) . CYAN . "║\n" . RESET;
+        }
     }
     
     echo CYAN . "╚════════════════════════════════════════════════════════════════════════════╝\n" . RESET;
@@ -679,54 +667,26 @@ function displayScriptsList($scripts) {
 }
 
 function runScript($script) {
-    echo "
-";
-    echo GREEN . "▶  Running: " . WHITE . $script['basename'] . "
-" . RESET;
-    echo CYAN . str_repeat("═", 70) . "
-" . RESET;
-    echo "
-";
-
-    $file = $script['file'];
-    if (!file_exists($file)) {
-        echo RED . "✗ Script file not found: " . $file . "
-" . RESET;
-        return;
-    }
-
-    // Run in SEPARATE php process (include kills whole bot on any fatal error)
-    // Windows-safe + show PHP errors (fixes silent exit 255)
-    $php = (defined('PHP_BINARY') && PHP_BINARY) ? PHP_BINARY : 'php';
+    echo "\n";
+    echo GREEN . "▶  Running: " . WHITE . $script['basename'] . "\n" . RESET;
+    echo CYAN . str_repeat("═", 70) . "\n" . RESET;
+    echo "\n";
+    
     $cwd = getcwd();
-    if (defined('BASE_DIR') && is_dir(BASE_DIR)) {
-        chdir(BASE_DIR);
-    }
-    $exitCode = 0;
-    $cmdArr = [$php, '-d', 'display_errors=1', '-d', 'error_reporting=E_ALL', $file];
-    if (function_exists('proc_open')) {
-        $desc = [0 => STDIN, 1 => STDOUT, 2 => STDOUT];
-        $proc = @proc_open($cmdArr, $desc, $pipes, (defined('BASE_DIR') ? BASE_DIR : $cwd));
-        if (is_resource($proc)) {
-            $exitCode = proc_close($proc);
-        } else {
-            passthru(escapeshellarg($php) . ' -d display_errors=1 ' . escapeshellarg($file), $exitCode);
-        }
+    chdir(SCRIPTS_DIR);
+    
+    if (file_exists($script['file'])) {
+        include $script['file'];
     } else {
-        passthru(escapeshellarg($php) . ' -d display_errors=1 ' . escapeshellarg($file), $exitCode);
+        echo RED . "✗ Script file not found: " . $script['file'] . "\n" . RESET;
     }
-    chdir($cwd);
-
+    
     echo "\n";
     echo CYAN . str_repeat("═", 70) . "\n" . RESET;
-    if ($exitCode === 0) {
-        echo GREEN . "✓ Script completed!\n" . RESET;
-    } else {
-        echo YELLOW . "⚠ Script exited with code " . $exitCode . "\n" . RESET;
-        echo YELLOW . "  Re-check PHP errors printed above. Do not use old folders.\n" . RESET;
-    }
+    echo GREEN . "✓ Script completed!\n" . RESET;
+    
+    chdir($cwd);
 }
-
 
 function getUserInput($prompt, $default = null) {
     echo WHITE . $prompt . RESET;

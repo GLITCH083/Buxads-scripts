@@ -1,4 +1,48 @@
 <?php
+
+if(!function_exists('bx_root')) {
+function bx_root($directory) {
+    for($i=0;$i<6;$i++){if(is_file($directory.'/functions/function.php'))return $directory;$directory=dirname($directory);}
+    throw new RuntimeException('Keep this script inside the Buxads-scripts folder.');
+}
+function bx_storage_root($root,$home,$platform) {
+    return $platform!=='Windows'&&is_string($home)&&$home!==''?rtrim($home,'/').'/.buxads':$root;
+}
+function bx_initialize($root,$storage=null) {
+    if(defined('BUXADS_DATA_DIR'))return BUXADS_DATA_DIR;
+    $data=$storage??bx_storage_root($root,getenv('HOME'),PHP_OS_FAMILY);
+    foreach(['information','configs'] as $folder){
+        $target=$data.'/'.$folder;
+        if(!is_dir($target)&&!@mkdir($target,0700,true)&&!is_dir($target))throw new RuntimeException('Cannot create private storage: '.$target);
+        if($data!==$root&&is_dir($root.'/'.$folder)&&!is_file($data.'/.migrated')){
+            $source=$root.'/'.$folder;
+            $iterator=new RecursiveIteratorIterator(new RecursiveDirectoryIterator($source,FilesystemIterator::SKIP_DOTS));
+            foreach($iterator as $file){
+                if(!$file->isFile()||$file->isLink())continue;
+                $relative=substr($file->getPathname(),strlen($source)+1);
+                if(str_starts_with(str_replace('\\','/',$relative),'instant-backups/'))continue;
+                $destination=$target.'/'.$relative;if(file_exists($destination))continue;
+                $parent=dirname($destination);if(!is_dir($parent)&&!@mkdir($parent,0700,true)&&!is_dir($parent))throw new RuntimeException('Cannot create storage folder.');
+                if(!@copy($file->getPathname(),$destination))throw new RuntimeException('Cannot migrate existing saved files.');
+                @chmod($destination,0600);
+            }
+        }
+    }
+    if($data!==$root&&!is_file($data.'/.migrated'))file_put_contents($data.'/.migrated','1',LOCK_EX);
+    define('BUXADS_DATA_DIR',$data);return $data;
+}
+function bx_card($title,$rows,$color="\033[96m") {
+    $width=max(38,min(68,(int)(getenv('COLUMNS')?:68)));$inner=$width-4;
+    echo $color.'╭'.str_repeat('─',$width-2)."╮\n";
+    foreach(array_merge([strtoupper($title),''],(array)$rows) as $row){
+        foreach(explode("\n",wordwrap((string)$row,$inner,"\n",true)) as $line)echo $color.'│ '."\033[97m".str_pad($line,$inner).$color." │\n";
+    }
+    echo $color.'╰'.str_repeat('─',$width-2)."╯\033[0m\n";
+}
+}
+
+bx_initialize(dirname(__DIR__));
+
 // ============================================
 // COLOR DEFINITIONS
 // ============================================
@@ -31,7 +75,7 @@ if (!defined("DIM")) define("DIM", "\033[2m");
 // SAVE DATA FUNCTION
 // ============================================
 function saveData($folder, $filename) {
-    $base = __DIR__ . "/../configs/{$folder}-config";
+    $base = (defined("BUXADS_DATA_DIR") ? BUXADS_DATA_DIR : dirname(__DIR__)) . "/configs/{$folder}-config";
     if (!is_dir($base)) mkdir($base, 0777, true);
 
     $path = $base . "/$filename";
@@ -71,7 +115,7 @@ function parseProxyString($proxy) {
 // GET CF COOKIE & USER AGENT - FIXED
 // ============================================
 function getCfCookieAndUserAgent($host, $proxy = null) {
-    $dir = __DIR__ . "/../configs/{$host}-config";
+    $dir = (defined("BUXADS_DATA_DIR") ? BUXADS_DATA_DIR : dirname(__DIR__)) . "/configs/{$host}-config";
     if (!is_dir($dir)) return null;
 
     $cookieFile = $dir . "/cf_cookie.txt";
@@ -111,7 +155,7 @@ function getCfCookieAndUserAgent($host, $proxy = null) {
 // SAVE CF COOKIE & USER AGENT
 // ============================================
 function saveCfCookieAndUserAgent($host, $cookie, $userAgent, $proxy = null) {
-    $dir = __DIR__ . "/../configs/{$host}-config";
+    $dir = (defined("BUXADS_DATA_DIR") ? BUXADS_DATA_DIR : dirname(__DIR__)) . "/configs/{$host}-config";
     if (!is_dir($dir)) mkdir($dir, 0777, true);
 
     // Determine filename based on proxy
@@ -143,7 +187,7 @@ function saveCfCookieAndUserAgent($host, $cookie, $userAgent, $proxy = null) {
 // GET COOKIES FUNCTION
 // ============================================
 function get_cookies($host, $proxy = null, $email = null) {
-    $dir = __DIR__ . "/../configs/{$host}-config";
+    $dir = (defined("BUXADS_DATA_DIR") ? BUXADS_DATA_DIR : dirname(__DIR__)) . "/configs/{$host}-config";
     if (!is_dir($dir)) return '';
     
     $cookieFile = $dir . "/cookie.txt";
@@ -222,7 +266,7 @@ function getRequestHeaders($host, $proxy = null, $email = null) {
 
 function Run($url, $head = 0, $post = 0, $data = "data", $proxy = 0, $returnType = 0, $name = "") {
     $host = parse_url($url, PHP_URL_HOST);
-    $folder = __DIR__ . "/../configs/{$host}-config";
+    $folder = (defined("BUXADS_DATA_DIR") ? BUXADS_DATA_DIR : dirname(__DIR__)) . "/configs/{$host}-config";
     if (!is_dir($folder)) mkdir($folder, 0777, true);
 
     // Cookie file

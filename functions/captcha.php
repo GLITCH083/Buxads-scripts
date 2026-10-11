@@ -3,10 +3,10 @@ include_once(__DIR__ . "/function.php");
 include(__DIR__ . "/rss.php");
 
 // Vernuable endpoints (docs style)
-define("api_in",  "https://vernuable.my.id/in.php");
-define("api_res", "https://vernuable.my.id/res.php");
+if (!defined("api_in")) define("api_in",  "https://vernuable.my.id/in.php");
+if (!defined("api_res")) define("api_res", "https://vernuable.my.id/res.php");
 // optional if you still need a single constant somewhere:
-define("api_endpoint", api_in);
+if (!defined("api_endpoint")) define("api_endpoint", api_in);
 
 function get_balance() {
     $data = json_encode([
@@ -63,7 +63,11 @@ function poll($id) {
 
         // pending
         if (($r['request'] ?? '') === 'CAPCHA_NOT_READY' || ($r['status'] ?? '') === 0 && ($r['request'] ?? '') === 'CAPCHA_NOT_READY') {
-            animation("[$id] Getting Captcha...");
+            if (function_exists('fp_log')) {
+                if ($i === 1 || $i % 5 === 0) fp_log('WAIT', 'Captcha pending (' . $i . '/' . $maxTries . ')');
+            } else {
+                animation("[$id] Getting Captcha...");
+            }
             sleep(3);
             continue;
         }
@@ -108,17 +112,24 @@ function upsidedown($bs64, $mode = 'upsidedown') {
     return $r;
 }
 
-function solve_adslab($sitekey, $domain, $type = "static", $subid = "widget_user") {
-    $data = json_encode([
+function solve_adslab($sitekey, $domain, $type = null, $subid = "widget_user") {
+    $payload = [
         "key"     => anticaptcha_key,
         "method"  => "adslab",
         "sitekey" => $sitekey,
         "domain"  => $domain,
         "subid"   => $subid,
-        "type"    => $type,
         "json"    => "1",
-    ]);
+    ];
+    if ($type !== null && $type !== "") {
+        $payload["type"] = $type;
+    }
+    $data = json_encode($payload);
     $create = json_decode(Run(api_in, ["Content-Type: application/json"], $data)['body'], true);
+
+    if ((int)($create['status'] ?? 0) === 1 && !empty($create['token'])) {
+        return $create;
+    }
 
     if (empty($create['request']) || (int)($create['status'] ?? 0) !== 1) {
         return ["success" => false, "message" => "Failed to create adslab job", "response" => $create];
@@ -161,7 +172,7 @@ function rs_upsidedown(string $html, string $url): array {
     if (!$imageBytes) return ['rs-response' => null];
 
     $coords = upsidedown(base64_encode($imageBytes), "rsv2");
-    if (empty($coords['x']) || empty($coords['y'])) return ['rs-response' => null];
+    if (!isset($coords['x'], $coords['y'])) return ['rs-response' => null];
 
     $token = (new RsCaptchaBuilder())->build((int)$coords['x'], (int)$coords['y'], $html);
     return ['rs-response' => $token];
@@ -192,7 +203,7 @@ function rs($html, $ua) {
 
 function bypassCloudFlare($url_, $proxy = null) {
     $host = parse_url($url_, PHP_URL_HOST);
-    $baseDir = BASE_DIR . "/configs/{$host}-config/";
+    $baseDir = (defined("BUXADS_DATA_DIR") ? BUXADS_DATA_DIR : BASE_DIR) . "/configs/{$host}-config/";
     if (!is_dir($baseDir)) {
         mkdir($baseDir, 0755, true);
     }
@@ -317,6 +328,13 @@ function Bypass($url) {
         "json"   => "1",
     ]);
     $response = json_decode(Run(api_in, ["Content-Type: application/json"], $data)['body'], true);
+    if ((int)($response['status'] ?? 0) === 1) {
+        $ready = $response['original_url'] ?? $response['token'] ?? $response['request'] ?? null;
+        if (is_string($ready) && filter_var($ready, FILTER_VALIDATE_URL)) {
+            $response['token'] = $ready;
+            return $response;
+        }
+    }
     if (isset($response['request']) && (int)($response['status'] ?? 0) === 1) {
         return poll($response['request']);
     }

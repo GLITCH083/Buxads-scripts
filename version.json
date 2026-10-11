@@ -1,9 +1,9 @@
 {
-  "version": "2.1.0",
+  "version": "2.1.1",
   "name": "BuxadsBot",
   "whats_new": [
-    "Added HotFaucet",
-    "Added Clear Logging"
+    "Added Claimcoin.in,freeltc.fun,cryptofuture.co.in,earnsolana.xyz",
+    "Added Clear Logging, fixed padding"
   ],
   "updated": "2026-10-11",
   "repo": "GLITCH083/Buxads-scripts"

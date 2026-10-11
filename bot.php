@@ -28,7 +28,7 @@ $tokenFile = BASE_DIR . "/github_token.txt";
 if (file_exists($tokenFile)) {
     $githubToken = trim(file_get_contents($tokenFile));
 } else {
-    $githubToken = "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";
+    $githubToken = "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";
 }
 
 define("GITHUB_TOKEN", $githubToken);

@@ -424,7 +424,7 @@ function Run($url, $head = 0, $post = 0, $data = "data", $proxy = 0, $returnType
             return strlen($headerLine);
         });
 
-        $response = curl_exec($ch);
+        $response = (function_exists('bx_interrupt_exec')?bx_interrupt_exec($ch):curl_exec($ch));
         $info = curl_getinfo($ch);
         $curlErr = curl_error($ch);
         curl_close($ch);

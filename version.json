@@ -1,9 +1,9 @@
 {
-  "version": "2.0.8",
+  "version": "2.0.9",
   "name": "BuxadsBot",
   "whats_new": [
-    "Added Pick Family All In one",
-    "Fixed Termux Save problem"
+    "Added HotFaucet",
+    "Added Clear Logging"
   ],
   "updated": "2026-10-11",
   "repo": "GLITCH083/Buxads-scripts"

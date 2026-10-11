@@ -1,5 +1,136 @@
 <?php
 namespace BuxAdsMultiPick;
+if (!function_exists(__NAMESPACE__.'\\bx_live_start')) {
+function bx_live_width($text) {
+    return function_exists('mb_strwidth') ? mb_strwidth($text,'UTF-8') : preg_match_all('/./us',$text);
+}
+function bx_live_render() {
+    $s=&$GLOBALS['BUXADS_LIVE_BOX'];
+    $width=max(38,min(78,(int)(getenv('COLUMNS')?:68)));
+    $inside=$width-4;$limit=max(6,min(20,(int)(getenv('LINES')?:26)-6));
+    $rows=[];
+    foreach(array_merge($s['history'],[$s['pending']]) as $row) {
+        $chars=preg_split('//u',$row,-1,PREG_SPLIT_NO_EMPTY);$part='';
+        foreach($chars?:[] as $char) {
+            if(bx_live_width($part.$char)>$inside) {$rows[]=$part;$part='';}
+            $part.=$char;
+        }
+        $rows[]=$part;
+    }
+    $rows=array_slice($rows,-$limit);
+    while(count($rows)<$limit) array_unshift($rows,'');
+    $title='BUXADS • LIVE ACTIVITY';
+    $out='';
+    if($s['drawn']) $out="\r\033[".($s['height']-2+($s['shift']??0))."A\033[J";
+    $out.="\033[96m╭".str_repeat('─',$width-2)."╮\n";
+    $out.='│ '."\033[97m".$title.str_repeat(' ',max(0,$inside-bx_live_width($title)))."\033[96m │\n";
+    $out.='├'.str_repeat('─',$width-2)."┤\n";
+    foreach($rows as $row) {
+        $color=preg_match('/\b(error|failed|failure|ERR)\b/i',$row)?'91':(preg_match('/\b(wait|waiting|cooldown|pending|next turn)\b/i',$row)?'93':(preg_match('/\b(OK|success|successfully|confirmed|reward|you got)\b/i',$row)?'92':'97'));
+        $out.="\033[96m│ \033[{$color}m".$row.str_repeat(' ',max(0,$inside-bx_live_width($row)))."\033[96m │\n";
+    }
+    $out.='╰'.str_repeat('─',$width-2)."╯\033[0m\n";
+    $s['height']=$limit+4;$s['drawn']=true;$s['shift']=0;
+    // Keep the input cursor inside the final content row.
+    $out.="\033[2A\033[".(3+min($inside,bx_live_width($s['pending']))).'G';
+    return $out;
+}
+function bx_live_output($chunk,$phase=0) {
+    $s=&$GLOBALS['BUXADS_LIVE_BOX'];
+    $finish=str_contains($chunk,"\x1eBX_END\x1e");
+    if($chunk===''&&($phase & PHP_OUTPUT_HANDLER_FINAL)&&empty($s['drawn'])) return '';
+    $chunk=str_replace("\x1eBX_END\x1e",'',$chunk);
+    $clean=preg_replace('/\x1b\[[0-9;?]*[A-Za-z]/','',$chunk);
+    $clean=str_replace(["\x08","\x07"],'',$clean);
+    foreach(preg_split('/(\r\n|\n|\r)/',$clean,-1,PREG_SPLIT_DELIM_CAPTURE) as $piece) {
+        if($piece==="\r") {$s['pending']='';continue;}
+        if($piece==="\n"||$piece==="\r\n") {
+            $line=trim($s['pending']);$s['pending']='';
+            $line=preg_replace('/^[│║]\s*|\s*[│║]$/u','',$line);
+            if($line!==''&&!preg_match('/^[╭╮╰╯┌┐└┘├┤╔╗╚╝═─━┬┴┼╠╣╦╩╬\s]+$/u',$line)) {
+                if(!preg_match('/^\[(INFO|WAIT|OK|ERR)\]/',$line)&&preg_match('/^\[|\b(failed|error|cooldown|waiting|pending|confirmed|successfully|you got|next turn)\b/i',$line)) {
+                    $tag=preg_match('/\b(error|failed|failure)\b/i',$line)?'ERR':(preg_match('/\b(wait|waiting|cooldown|pending|next turn)\b/i',$line)?'WAIT':(preg_match('/\b(OK|success|successfully|confirmed|reward|you got)\b/i',$line)?'OK':'INFO'));
+                    $line='['.$tag.'] '.$line;
+                }
+                $s['history'][]=$line;
+                if(empty($s['manual'])&&preg_match('/you got|claim.{0,25}success|success.{0,25}claim|reward confirmed|\bearned\b|\bfailed\b/i',$line)) $finish=true;
+            }
+            $s['history']=array_slice($s['history'],-80);
+        } else $s['pending'].=$piece;
+    }
+    $out=bx_live_render();
+    if($finish||($phase & PHP_OUTPUT_HANDLER_FINAL)) {
+        $out.="\033[2B\r\n";
+        $s=['history'=>[],'pending'=>'','drawn'=>false,'height'=>0,'shift'=>0,'manual'=>false];
+    }
+    return $out;
+}
+function bx_interrupt_setup() {
+    if(PHP_OS_FAMILY==='Windows') return;
+    if(function_exists('pcntl_async_signals')&&function_exists('pcntl_signal')) {
+        pcntl_async_signals(true);
+        $stop=function($signal) {
+            echo "\n[INFO] Stopped by user.\n";
+            bx_live_finish();
+            exit(128+$signal);
+        };
+        pcntl_signal(SIGINT,$stop,false);
+        pcntl_signal(SIGTERM,$stop,false);
+    }
+    if(function_exists('stream_isatty')&&stream_isatty(STDIN)&&function_exists('exec')) @exec("stty isig intr '^C' -ixon 2>/dev/null");
+}
+function bx_interrupt_exec($handle) {
+    if(PHP_OS_FAMILY!=='Windows'&&function_exists('pcntl_signal_dispatch')) {
+        curl_setopt($handle,CURLOPT_NOPROGRESS,false);
+        curl_setopt($handle,CURLOPT_XFERINFOFUNCTION,function($curl,$downloadSize,$downloaded,$uploadSize,$uploaded){pcntl_signal_dispatch();return 0;});
+    }
+    return curl_exec($handle);
+}
+function bx_interrupt_read() {
+    if(PHP_OS_FAMILY==='Windows'||!function_exists('pcntl_signal_dispatch')) return \readline('');
+    stream_set_blocking(STDIN,false);$result='';
+    try {
+        while(true) {
+            pcntl_signal_dispatch();
+            $part=fgets(STDIN);
+            if($part!==false) {$result.=$part;if(str_contains($part,"\n")) return rtrim($result,"\r\n");}
+            elseif(feof(STDIN)) return $result===''?false:$result;
+            usleep(100000);
+        }
+    } finally {stream_set_blocking(STDIN,true);}
+}
+
+function bx_live_start() {
+    if(isset($GLOBALS['BUXADS_LIVE_BOX'])) return;
+    $GLOBALS['BUXADS_LIVE_BOX']=['history'=>[],'pending'=>'','drawn'=>false,'height'=>0,'shift'=>0];
+    ob_start(__NAMESPACE__.'\\bx_live_output',1);
+    bx_interrupt_setup();
+}
+function bx_live_readline($prompt='') {
+    echo $prompt;
+    $value=bx_interrupt_read();
+    if(function_exists('stream_isatty')&&stream_isatty(STDIN)) $GLOBALS['BUXADS_LIVE_BOX']['shift']=1;
+    echo "\n";
+    return $value;
+}
+function bx_live_finish() {
+    if(!empty($GLOBALS['BUXADS_LIVE_BOX']['drawn'])) echo "\x1eBX_END\x1e";
+}
+function bx_live_begin() {
+    bx_live_finish();
+    $GLOBALS['BUXADS_LIVE_BOX']['manual']=true;
+}
+}
+bx_live_start();
+
+
+
+
+
+
+
+
+
 error_reporting(E_ALL & ~E_DEPRECATED & ~E_NOTICE);
 date_default_timezone_set("Asia/Karachi");
 define(__NAMESPACE__."\\"."APP_HOST", "Multi-claimer");
@@ -296,7 +427,7 @@ function Run($url, $head = 0, $post = 0, $data = "data", $proxy = 0, $returnType
 
         curl_setopt($ch, CURLOPT_HEADER, true);  
 
-        $response = curl_exec($ch);  
+        $response = bx_interrupt_exec($ch);  
         $info = curl_getinfo($ch);  
         $curlErr = curl_error($ch);  
 
@@ -346,7 +477,7 @@ function saveData($folder, $filename) {
     if (file_exists($path)) {
         return file_get_contents($path);
     } else {
-        $data = $filename === 'UserAgent' ? 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36' : readline("Input $filename: ");
+        $data = $filename === 'UserAgent' ? 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36' : bx_live_readline("Input $filename: ");
         file_put_contents($path, $data);
         return $data;
     }
@@ -1390,7 +1521,7 @@ function showMenu() {
     echo WHITE . "  [2] " . CYAN . "Select specific host\n";
     echo WHITE . "  [3] " . CYAN . "Exit\n\n";
     echo WHITE . "Enter choice: ";
-    $choice = trim(readline());
+    $choice = trim(bx_live_readline());
     return $choice;
 }
 
@@ -1406,7 +1537,7 @@ function showHostMenu($hosts) {
     }
     echo WHITE . "  [0] " . CYAN . "Back to main menu\n\n";
     echo WHITE . "Enter choice: ";
-    $choice = trim(readline());
+    $choice = trim(bx_live_readline());
     return $choice;
 }
 
@@ -1446,6 +1577,8 @@ function pk_run($selected,$once=false,$attempt=null) {
                 $state=is_file($file)?json_decode(file_get_contents($file),true):[];
                 $next=(int)($state['next_claim_at']??0);
                 if($next>time()) {if($once) pk_log($host,$id,'Cooldown until '.date('H:i:s',$next));$earliest=min($earliest,$next);continue;}
+                bx_live_begin();
+                bx_live_begin();
                 try {
                     if($attempt) $result=$attempt($host,$a,$id,$config);
                     else {
@@ -1463,19 +1596,21 @@ function pk_run($selected,$once=false,$attempt=null) {
                     pk_save_state($file,$next,'failed');pk_log($host,$id,"Failed ($failures/3)");
                     if($failures>=3) {echo "Stopped after 3 consecutive failures.\n";return 1;}
                 }
+                bx_live_finish();
+                bx_live_finish();
                 $earliest=min($earliest,$next);
             }
             if(!$once) {echo 'Next account ready at '.date('H:i:s',$earliest)."\n";while(time()<$earliest) sleep(min(30,$earliest-time()));}
         } while(!$once);
         return $failures?1:0;
-    } finally {foreach($locks as $lock) {flock($lock,LOCK_UN);fclose($lock);}}
+    } finally {bx_live_finish();foreach($locks as $lock) {flock($lock,LOCK_UN);fclose($lock);}}
 }
 function pk_choose($hosts,$default=null) {
     if($default) return $default;
     $names=array_keys($hosts);$rows=[];
     foreach($names as $i=>$host) $rows[]=($i+1).'. '.$host.' ('.count(pk_accounts($host)).' accounts)';
     bx_card('Choose site',$rows);
-    $choice=(int)readline('Site number (0 cancels): ');
+    $choice=(int)bx_live_readline('Site number (0 cancels): ');
     return $names[$choice-1]??null;
 }
 function pk_selection($hosts,$input) {
@@ -1503,13 +1638,13 @@ function pk_menu($hosts,$default=null) {
     }
     while(true) {
         bx_card($default?:'MultiPick • hourly faucets',['1. Run one site 24/7','2. Run all configured sites 24/7','7. Run selected sites 24/7','3. Add account','4. View accounts','5. Delete account','6. Test one round','0. Exit']);
-        $choice=trim(readline('Choose: '));if($choice==='0'||$choice==='') return 0;
+        $choice=trim(bx_live_readline('Choose: '));if($choice==='0'||$choice==='') return 0;
         if($choice==='2') return pk_run($hosts);
         if($choice==='7') {
             $names=array_keys($hosts);$rows=[];
             foreach($names as $i=>$name) $rows[]=($i+1).'. '.$name.' ('.count(pk_accounts($name)).' accounts)';
             bx_card('Choose your sites',$rows);
-            $input=trim(readline('Site numbers separated by commas (0 cancels): '));
+            $input=trim(bx_live_readline('Site numbers separated by commas (0 cancels): '));
             $selected=pk_selection($hosts,$input);
             if(!$selected) {echo "No valid sites selected.\n";continue;}
             return pk_run($selected);
@@ -1518,13 +1653,13 @@ function pk_menu($hosts,$default=null) {
         if($choice==='1'||$choice==='6') return pk_run([$host=>$hosts[$host]],$choice==='6');
         $accounts=pk_accounts($host);
         if($choice==='3') {
-            $email=trim(readline('Email: '));$password=trim(readline('Password: '));$proxy=trim(readline('Proxy (optional): '));
+            $email=trim(bx_live_readline('Email: '));$password=trim(bx_live_readline('Password: '));$proxy=trim(bx_live_readline('Proxy (optional): '));
             if(!filter_var($email,FILTER_VALIDATE_EMAIL)||$password===''||strpbrk($email.$password.$proxy,"|\r\n")!==false) {echo "Invalid account\n";continue;}
             $accounts[]=['email'=>$email,'password'=>$password,'proxy'=>$proxy?:null];
         } elseif($choice==='4'||$choice==='5') {
             bx_card($host,array_map(fn($a,$i)=>($i+1).'. '.$a['email'],$accounts,array_keys($accounts)));
             if($choice==='4') continue;
-            $id=(int)readline('Delete number (0 cancels): ')-1;
+            $id=(int)bx_live_readline('Delete number (0 cancels): ')-1;
             if(!isset($accounts[$id])) continue;
             unset($accounts[$id]);
         } else continue;

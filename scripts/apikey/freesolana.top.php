@@ -1,4 +1,135 @@
 <?php
+if (!function_exists(__NAMESPACE__.'\\bx_live_start')) {
+function bx_live_width($text) {
+    return function_exists('mb_strwidth') ? mb_strwidth($text,'UTF-8') : preg_match_all('/./us',$text);
+}
+function bx_live_render() {
+    $s=&$GLOBALS['BUXADS_LIVE_BOX'];
+    $width=max(38,min(78,(int)(getenv('COLUMNS')?:68)));
+    $inside=$width-4;$limit=max(6,min(20,(int)(getenv('LINES')?:26)-6));
+    $rows=[];
+    foreach(array_merge($s['history'],[$s['pending']]) as $row) {
+        $chars=preg_split('//u',$row,-1,PREG_SPLIT_NO_EMPTY);$part='';
+        foreach($chars?:[] as $char) {
+            if(bx_live_width($part.$char)>$inside) {$rows[]=$part;$part='';}
+            $part.=$char;
+        }
+        $rows[]=$part;
+    }
+    $rows=array_slice($rows,-$limit);
+    while(count($rows)<$limit) array_unshift($rows,'');
+    $title='BUXADS • LIVE ACTIVITY';
+    $out='';
+    if($s['drawn']) $out="\r\033[".($s['height']-2+($s['shift']??0))."A\033[J";
+    $out.="\033[96m╭".str_repeat('─',$width-2)."╮\n";
+    $out.='│ '."\033[97m".$title.str_repeat(' ',max(0,$inside-bx_live_width($title)))."\033[96m │\n";
+    $out.='├'.str_repeat('─',$width-2)."┤\n";
+    foreach($rows as $row) {
+        $color=preg_match('/\b(error|failed|failure|ERR)\b/i',$row)?'91':(preg_match('/\b(wait|waiting|cooldown|pending|next turn)\b/i',$row)?'93':(preg_match('/\b(OK|success|successfully|confirmed|reward|you got)\b/i',$row)?'92':'97'));
+        $out.="\033[96m│ \033[{$color}m".$row.str_repeat(' ',max(0,$inside-bx_live_width($row)))."\033[96m │\n";
+    }
+    $out.='╰'.str_repeat('─',$width-2)."╯\033[0m\n";
+    $s['height']=$limit+4;$s['drawn']=true;$s['shift']=0;
+    // Keep the input cursor inside the final content row.
+    $out.="\033[2A\033[".(3+min($inside,bx_live_width($s['pending']))).'G';
+    return $out;
+}
+function bx_live_output($chunk,$phase=0) {
+    $s=&$GLOBALS['BUXADS_LIVE_BOX'];
+    $finish=str_contains($chunk,"\x1eBX_END\x1e");
+    if($chunk===''&&($phase & PHP_OUTPUT_HANDLER_FINAL)&&empty($s['drawn'])) return '';
+    $chunk=str_replace("\x1eBX_END\x1e",'',$chunk);
+    $clean=preg_replace('/\x1b\[[0-9;?]*[A-Za-z]/','',$chunk);
+    $clean=str_replace(["\x08","\x07"],'',$clean);
+    foreach(preg_split('/(\r\n|\n|\r)/',$clean,-1,PREG_SPLIT_DELIM_CAPTURE) as $piece) {
+        if($piece==="\r") {$s['pending']='';continue;}
+        if($piece==="\n"||$piece==="\r\n") {
+            $line=trim($s['pending']);$s['pending']='';
+            $line=preg_replace('/^[│║]\s*|\s*[│║]$/u','',$line);
+            if($line!==''&&!preg_match('/^[╭╮╰╯┌┐└┘├┤╔╗╚╝═─━┬┴┼╠╣╦╩╬\s]+$/u',$line)) {
+                if(!preg_match('/^\[(INFO|WAIT|OK|ERR)\]/',$line)&&preg_match('/^\[|\b(failed|error|cooldown|waiting|pending|confirmed|successfully|you got|next turn)\b/i',$line)) {
+                    $tag=preg_match('/\b(error|failed|failure)\b/i',$line)?'ERR':(preg_match('/\b(wait|waiting|cooldown|pending|next turn)\b/i',$line)?'WAIT':(preg_match('/\b(OK|success|successfully|confirmed|reward|you got)\b/i',$line)?'OK':'INFO'));
+                    $line='['.$tag.'] '.$line;
+                }
+                $s['history'][]=$line;
+                if(empty($s['manual'])&&preg_match('/you got|claim.{0,25}success|success.{0,25}claim|reward confirmed|\bearned\b|\bfailed\b/i',$line)) $finish=true;
+            }
+            $s['history']=array_slice($s['history'],-80);
+        } else $s['pending'].=$piece;
+    }
+    $out=bx_live_render();
+    if($finish||($phase & PHP_OUTPUT_HANDLER_FINAL)) {
+        $out.="\033[2B\r\n";
+        $s=['history'=>[],'pending'=>'','drawn'=>false,'height'=>0,'shift'=>0,'manual'=>false];
+    }
+    return $out;
+}
+function bx_interrupt_setup() {
+    if(PHP_OS_FAMILY==='Windows') return;
+    if(function_exists('pcntl_async_signals')&&function_exists('pcntl_signal')) {
+        pcntl_async_signals(true);
+        $stop=function($signal) {
+            echo "\n[INFO] Stopped by user.\n";
+            bx_live_finish();
+            exit(128+$signal);
+        };
+        pcntl_signal(SIGINT,$stop,false);
+        pcntl_signal(SIGTERM,$stop,false);
+    }
+    if(function_exists('stream_isatty')&&stream_isatty(STDIN)&&function_exists('exec')) @exec("stty isig intr '^C' -ixon 2>/dev/null");
+}
+function bx_interrupt_exec($handle) {
+    if(PHP_OS_FAMILY!=='Windows'&&function_exists('pcntl_signal_dispatch')) {
+        curl_setopt($handle,CURLOPT_NOPROGRESS,false);
+        curl_setopt($handle,CURLOPT_XFERINFOFUNCTION,function($curl,$downloadSize,$downloaded,$uploadSize,$uploaded){pcntl_signal_dispatch();return 0;});
+    }
+    return curl_exec($handle);
+}
+function bx_interrupt_read() {
+    if(PHP_OS_FAMILY==='Windows'||!function_exists('pcntl_signal_dispatch')) return \readline('');
+    stream_set_blocking(STDIN,false);$result='';
+    try {
+        while(true) {
+            pcntl_signal_dispatch();
+            $part=fgets(STDIN);
+            if($part!==false) {$result.=$part;if(str_contains($part,"\n")) return rtrim($result,"\r\n");}
+            elseif(feof(STDIN)) return $result===''?false:$result;
+            usleep(100000);
+        }
+    } finally {stream_set_blocking(STDIN,true);}
+}
+
+function bx_live_start() {
+    if(isset($GLOBALS['BUXADS_LIVE_BOX'])) return;
+    $GLOBALS['BUXADS_LIVE_BOX']=['history'=>[],'pending'=>'','drawn'=>false,'height'=>0,'shift'=>0];
+    ob_start(__NAMESPACE__.'\\bx_live_output',1);
+    bx_interrupt_setup();
+}
+function bx_live_readline($prompt='') {
+    echo $prompt;
+    $value=bx_interrupt_read();
+    if(function_exists('stream_isatty')&&stream_isatty(STDIN)) $GLOBALS['BUXADS_LIVE_BOX']['shift']=1;
+    echo "\n";
+    return $value;
+}
+function bx_live_finish() {
+    if(!empty($GLOBALS['BUXADS_LIVE_BOX']['drawn'])) echo "\x1eBX_END\x1e";
+}
+function bx_live_begin() {
+    bx_live_finish();
+    $GLOBALS['BUXADS_LIVE_BOX']['manual']=true;
+}
+}
+bx_live_start();
+
+
+
+
+
+
+
+
+
 
 if(!function_exists('bx_root')) {
 function bx_root($directory) {

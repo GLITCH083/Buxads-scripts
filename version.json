@@ -1,8 +1,8 @@
 {
-  "version": "2.0.5",
+  "version": "2.0.6",
   "name": "BuxadsBot",
   "whats_new": [
-    "Faucetpepe.xyz added"
+    "Added FaucetPepe shortlink"
   ],
   "updated": "2026-10-11",
   "repo": "GLITCH083/Buxads-scripts"

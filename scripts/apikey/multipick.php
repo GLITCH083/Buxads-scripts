@@ -18,7 +18,6 @@ function bx_live_render() {
         $rows[]=$part;
     }
     $rows=array_slice($rows,-$limit);
-    while(count($rows)<$limit) array_unshift($rows,'');
     $title='BUXADS • LIVE ACTIVITY';
     $out='';
     if($s['drawn']) $out="\r\033[".($s['height']-2+($s['shift']??0))."A\033[J";
@@ -30,7 +29,7 @@ function bx_live_render() {
         $out.="\033[96m│ \033[{$color}m".$row.str_repeat(' ',max(0,$inside-bx_live_width($row)))."\033[96m │\n";
     }
     $out.='╰'.str_repeat('─',$width-2)."╯\033[0m\n";
-    $s['height']=$limit+4;$s['drawn']=true;$s['shift']=0;
+    $s['height']=count($rows)+4;$s['drawn']=true;$s['shift']=0;
     // Keep the input cursor inside the final content row.
     $out.="\033[2A\033[".(3+min($inside,bx_live_width($s['pending']))).'G';
     return $out;
@@ -122,6 +121,7 @@ function bx_live_begin() {
 }
 }
 bx_live_start();
+
 
 
 

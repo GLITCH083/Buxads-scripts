@@ -1,9 +1,53 @@
 <?php
 
+if(!function_exists('bx_root')) {
+function bx_root($directory) {
+    for($i=0;$i<6;$i++){if(is_file($directory.'/functions/function.php'))return $directory;$directory=dirname($directory);}
+    throw new RuntimeException('Keep this script inside the Buxads-scripts folder.');
+}
+function bx_storage_root($root,$home,$platform) {
+    return $platform!=='Windows'&&is_string($home)&&$home!==''?rtrim($home,'/').'/.buxads':$root;
+}
+function bx_initialize($root,$storage=null) {
+    if(defined('BUXADS_DATA_DIR'))return BUXADS_DATA_DIR;
+    $data=$storage??bx_storage_root($root,getenv('HOME'),PHP_OS_FAMILY);
+    foreach(['information','configs'] as $folder){
+        $target=$data.'/'.$folder;
+        if(!is_dir($target)&&!@mkdir($target,0700,true)&&!is_dir($target))throw new RuntimeException('Cannot create private storage: '.$target);
+        if($data!==$root&&is_dir($root.'/'.$folder)&&!is_file($data.'/.migrated')){
+            $source=$root.'/'.$folder;
+            $iterator=new RecursiveIteratorIterator(new RecursiveDirectoryIterator($source,FilesystemIterator::SKIP_DOTS));
+            foreach($iterator as $file){
+                if(!$file->isFile()||$file->isLink())continue;
+                $relative=substr($file->getPathname(),strlen($source)+1);
+                if(str_starts_with(str_replace('\\','/',$relative),'instant-backups/'))continue;
+                $destination=$target.'/'.$relative;if(file_exists($destination))continue;
+                $parent=dirname($destination);if(!is_dir($parent)&&!@mkdir($parent,0700,true)&&!is_dir($parent))throw new RuntimeException('Cannot create storage folder.');
+                if(!@copy($file->getPathname(),$destination))throw new RuntimeException('Cannot migrate existing saved files.');
+                @chmod($destination,0600);
+            }
+        }
+    }
+    if($data!==$root&&!is_file($data.'/.migrated'))file_put_contents($data.'/.migrated','1',LOCK_EX);
+    define('BUXADS_DATA_DIR',$data);return $data;
+}
+function bx_card($title,$rows,$color="\033[96m") {
+    $width=max(38,min(68,(int)(getenv('COLUMNS')?:68)));$inner=$width-4;
+    echo $color.'╭'.str_repeat('─',$width-2)."╮\n";
+    foreach(array_merge([strtoupper($title),''],(array)$rows) as $row){
+        foreach(explode("\n",wordwrap((string)$row,$inner,"\n",true)) as $line)echo $color.'│ '."\033[97m".str_pad($line,$inner).$color." │\n";
+    }
+    echo $color.'╰'.str_repeat('─',$width-2)."╯\033[0m\n";
+}
+}
+
+
+
 date_default_timezone_set("Asia/Karachi");
 
-define("APP_HOST", "buxads-Bot");
-define("BASE_DIR", dirname(__DIR__));
+if(!defined("APP_HOST"))define("APP_HOST", "buxads-Bot");
+if(!defined("BASE_DIR"))define("BASE_DIR", bx_root(__DIR__));
+bx_initialize(BASE_DIR);
 
 error_reporting(0);
 // Include functions
@@ -43,7 +87,7 @@ $GLOBALS['ptc_totalclaims'] = 0;
 
 function getAccountsFile() {
     // Create information folder if it doesn't exist
-    $infoDir = BASE_DIR . "/information";
+    $infoDir = BUXADS_DATA_DIR . "/information";
     if (!is_dir($infoDir)) {
         mkdir($infoDir, 0755, true);
     }
@@ -138,33 +182,8 @@ function deleteAccount($email) {
 }
 
 function displayAccounts() {
-    $accounts = loadAccounts();
-    if (empty($accounts)) {
-        echo YELLOW . "No accounts found. Add some first!\n" . RESET;
-        return;
-    }
-    
-    echo "\n";
-    echo CYAN . "╔═══════════════════════════════════════════════════════════════╗\n" . RESET;
-    echo CYAN . "║" . WHITE . "  📋  ACCOUNT LIST" . str_repeat(" ", 34) . CYAN . "║\n" . RESET;
-    echo CYAN . "╠═══════════════════════════════════════════════════════════════╣\n" . RESET;
-    
-    $i = 1;
-    foreach ($accounts as $acc) {
-        $proxyStatus = !empty($acc['proxy']) ? GREEN . "✓" . RESET : RED . "✗" . RESET;
-        $passStatus = !empty($acc['password']) ? GREEN . "✓" . RESET : YELLOW . "○" . RESET;
-        $line = sprintf("║  %2d. %-25s  Pass: %s  Proxy: %s  ║", 
-            $i, 
-            substr($acc['email'], 0, 25), 
-            $passStatus,
-            $proxyStatus
-        );
-        echo WHITE . $line . "\n" . RESET;
-        $i++;
-    }
-    
-    echo CYAN . "╚═══════════════════════════════════════════════════════════════╝\n" . RESET;
-    echo "\n";
+    $rows=[];foreach(loadAccounts() as $i=>$account){$label=$account['email']??$account['name']??('Account '.($i+1));$rows[]=($i+1).'. '.$label.' | '.(!empty($account['proxy'])?'proxy':'direct');}
+    bx_card('Saved accounts', $rows?:['No accounts saved.']);
 }
 
 function selectAccount() {
@@ -188,19 +207,8 @@ function selectAccount() {
 }
 
 function menu() {
-    clear();
-    echo "\n";
-    echo CYAN . "╔═══════════════════════════════════════════════════════════════╗\n" . RESET;
-    echo CYAN . "║" . WHITE . "  🚀  faucetcrypto.net AUTO BOT" . str_repeat(" ", 30) . CYAN . "║\n" . RESET;
-    echo CYAN . "╠═══════════════════════════════════════════════════════════════╣\n" . RESET;
-    echo CYAN . "║" . WHITE . "  1. Run Account" . str_repeat(" ", 45) . CYAN . "║\n" . RESET;
-    echo CYAN . "║" . WHITE . "  2. Add Account" . str_repeat(" ", 45) . CYAN . "║\n" . RESET;
-    echo CYAN . "║" . WHITE . "  3. Delete Account" . str_repeat(" ", 43) . CYAN . "║\n" . RESET;
-    echo CYAN . "║" . WHITE . "  4. View Accounts" . str_repeat(" ", 43) . CYAN . "║\n" . RESET;
-    echo CYAN . "║" . WHITE . "  5. Exit" . str_repeat(" ", 52) . CYAN . "║\n" . RESET;
-    echo CYAN . "╚═══════════════════════════════════════════════════════════════╝\n" . RESET;
-    echo "\n";
-    echo WHITE . "Choose an option: " . RESET;
+    bx_card('FaucetCrypto / BuxAds', ['ACCOUNTS & REWARDS', '1  Run account', '2  Add account', '3  Delete account', '4  View accounts', '5  Exit']);
+    echo "Choose: ";
 }
 
 function headers(){

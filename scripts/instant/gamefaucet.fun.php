@@ -1,17 +1,57 @@
 <?php
+
+if(!function_exists('bx_root')) {
+function bx_root($directory) {
+    for($i=0;$i<6;$i++){if(is_file($directory.'/functions/function.php'))return $directory;$directory=dirname($directory);}
+    throw new RuntimeException('Keep this script inside the Buxads-scripts folder.');
+}
+function bx_storage_root($root,$home,$platform) {
+    return $platform!=='Windows'&&is_string($home)&&$home!==''?rtrim($home,'/').'/.buxads':$root;
+}
+function bx_initialize($root,$storage=null) {
+    if(defined('BUXADS_DATA_DIR'))return BUXADS_DATA_DIR;
+    $data=$storage??bx_storage_root($root,getenv('HOME'),PHP_OS_FAMILY);
+    foreach(['information','configs'] as $folder){
+        $target=$data.'/'.$folder;
+        if(!is_dir($target)&&!@mkdir($target,0700,true)&&!is_dir($target))throw new RuntimeException('Cannot create private storage: '.$target);
+        if($data!==$root&&is_dir($root.'/'.$folder)&&!is_file($data.'/.migrated')){
+            $source=$root.'/'.$folder;
+            $iterator=new RecursiveIteratorIterator(new RecursiveDirectoryIterator($source,FilesystemIterator::SKIP_DOTS));
+            foreach($iterator as $file){
+                if(!$file->isFile()||$file->isLink())continue;
+                $relative=substr($file->getPathname(),strlen($source)+1);
+                if(str_starts_with(str_replace('\\','/',$relative),'instant-backups/'))continue;
+                $destination=$target.'/'.$relative;if(file_exists($destination))continue;
+                $parent=dirname($destination);if(!is_dir($parent)&&!@mkdir($parent,0700,true)&&!is_dir($parent))throw new RuntimeException('Cannot create storage folder.');
+                if(!@copy($file->getPathname(),$destination))throw new RuntimeException('Cannot migrate existing saved files.');
+                @chmod($destination,0600);
+            }
+        }
+    }
+    if($data!==$root&&!is_file($data.'/.migrated'))file_put_contents($data.'/.migrated','1',LOCK_EX);
+    define('BUXADS_DATA_DIR',$data);return $data;
+}
+function bx_card($title,$rows,$color="\033[96m") {
+    $width=max(38,min(68,(int)(getenv('COLUMNS')?:68)));$inner=$width-4;
+    echo $color.'╭'.str_repeat('─',$width-2)."╮\n";
+    foreach(array_merge([strtoupper($title),''],(array)$rows) as $row){
+        foreach(explode("\n",wordwrap((string)$row,$inner,"\n",true)) as $line)echo $color.'│ '."\033[97m".str_pad($line,$inner).$color." │\n";
+    }
+    echo $color.'╰'.str_repeat('─',$width-2)."╯\033[0m\n";
+}
+}
+
+
 /** Instant sites - BuxAds shared runner. @version 1.2.0 */
 if (!function_exists('fp_main')) {
 function fp_site() {return $GLOBALS['fp_site_config']??['host'=>'faucetpepe.xyz','title'=>'FaucetPepe','mode'=>'form','coins'=>['ltc']];}
 function fp_host() {return fp_site()['host'];}
 function fp_origin() {return 'https://'.fp_host();}
-function fp_private() {return fp_root().'/configs/'.(fp_host()==='faucetpepe.xyz'?'faucetpepe-client':fp_host().'-instant-client');}
+function fp_private() {return bx_initialize(fp_root()).'/configs/'.(fp_host()==='faucetpepe.xyz'?'faucetpepe-client':fp_host().'-instant-client');}
 function fp_coin($a) {return $a['currency']??($GLOBALS['fp_currency']??'ltc');}
 function fp_points_label() {return in_array(fp_host(),['spaceshooter.net','gamefaucet.fun','claimpepe.xyz'],true)?'ENERGY':'PTS';}
 function fp_card($title,$rows,$color=null) {
-    $color=$color??CYAN;$width=62;$border='+'.str_repeat('-',$width-2).'+';
-    echo $color.$border."\n| ".str_pad(strtoupper($title),$width-4)." |\n".$border."\n";
-    foreach($rows as $row)foreach(explode("\n",wordwrap((string)$row,$width-4,"\n",true)) as $line)echo '| '.WHITE.str_pad($line,$width-4).$color." |\n";
-    echo $color.$border."\033[0m\n";
+    bx_card($title,$rows,$color??CYAN);
 }
 function fp_banner($accounts) {
     $form=(fp_site()['mode']??'form')==='form';
@@ -31,7 +71,7 @@ function fp_log($level,$message,$label='') {
     echo $color.$line."\033[0m\n";
     file_put_contents(fp_private().'/events.log',$line.PHP_EOL,FILE_APPEND|LOCK_EX);
 }
-function fp_accounts_file() {return fp_root().'/information/'.fp_host().'.txt';}
+function fp_accounts_file() {return bx_initialize(fp_root()).'/information/'.fp_host().'.txt';}
 function fp_accounts() {
     if(!is_file(fp_accounts_file()))return [];$accounts=[];
     foreach(file(fp_accounts_file(),FILE_IGNORE_NEW_LINES|FILE_SKIP_EMPTY_LINES) as $line) {
@@ -40,13 +80,15 @@ function fp_accounts() {
     }return $accounts;
 }
 function fp_save_accounts($accounts) {
+    $file=fp_accounts_file();$directory=dirname($file);
+    if(!is_dir($directory)&&!@mkdir($directory,0700,true)&&!is_dir($directory))throw new RuntimeException('Cannot create account folder: '.$directory.'. Move Buxads-scripts into a writable folder in Termux home.');
     $text="# email|password(optional)|proxy(optional)\n";
     foreach($accounts as $a)$text.=$a['email'].'|'.($a['password']??'').'|'.($a['proxy']??'')."\n";
-    if(file_put_contents(fp_accounts_file(),$text,LOCK_EX)===false)throw new RuntimeException('Cannot save accounts.');
-    @chmod(fp_accounts_file(),0600);
+    if(@file_put_contents($file,$text,LOCK_EX)===false)throw new RuntimeException('Cannot save accounts to '.$file.'. Check folder permissions, or move Buxads-scripts into Termux home.');
+    @chmod($file,0600);
 }
 function fp_ua() {
-    $file=fp_root().'/configs/'.fp_host().'-config/userAgent';
+    $file=bx_initialize(fp_root()).'/configs/'.fp_host().'-config/userAgent';
     return is_file($file)&&trim(file_get_contents($file))!==''?trim(file_get_contents($file)):trim(saveData(APP_HOST,'user-agent'));
 }
 function fp_cookie_name($a) {return ($a['session_prefix']??'fp-').md5(strtolower($a['email']));}
@@ -387,7 +429,13 @@ function fp_main($args,$site=null) {
                 $accounts[]=['email'=>$email,'password'=>$password,'proxy'=>$proxy];fp_save_accounts($accounts);fp_log('OK','Account saved.');
             }
             elseif($choice==='4')foreach($accounts as $i=>$a)echo ($i+1).'. '.$a['email'].' | '.($a['proxy']?'proxy':'direct').PHP_EOL;
-            elseif($choice==='5'){$n=(int)fp_input('Account number: ')-1;if(!isset($accounts[$n]))throw new RuntimeException('Invalid account.');unset($accounts[$n]);fp_save_accounts($accounts);fp_log('OK','Account removed.');}
+            elseif($choice==='5'){
+                if(!$accounts){fp_log('INFO','No accounts to delete.');continue;}
+                foreach($accounts as $i=>$a)echo ($i+1).'. '.$a['email'].PHP_EOL;
+                $n=(int)fp_input('Delete account number (0 cancels): ')-1;
+                if($n===-1)continue;if(!isset($accounts[$n]))throw new RuntimeException('Invalid account.');
+                unset($accounts[$n]);fp_save_accounts($accounts);fp_log('OK','Account removed from saved accounts.');
+            }
             elseif($choice==='6')fp_log('INFO','API balance: '.(get_balance()??'unavailable'));
             elseif($choice==='7')fp_run($accounts,false);
             elseif($choice==='8'){if((fp_site()['mode']??'form')!=='form')throw new RuntimeException('Shortlinks are not available in this adapter.');fp_run($accounts,false,'shortlinks');}

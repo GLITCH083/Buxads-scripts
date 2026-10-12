@@ -1,10 +1,9 @@
 {
-  "version": "2.1.1",
+  "version": "2.1.2",
   "name": "BuxadsBot",
   "whats_new": [
-    "Added Claimcoin.in,freeltc.fun,cryptofuture.co.in,earnsolana.xyz",
-    "Added Clear Logging, fixed padding"
+    "Added shapeCaptcha in: Claimcoin.in,freeltc.fun,cryptofuture.co.in,earnsolana.xyz"
   ],
-  "updated": "2026-10-11",
+  "updated": "2026-10-12",
   "repo": "GLITCH083/Buxads-scripts"
 }

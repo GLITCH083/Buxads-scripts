@@ -502,3 +502,26 @@ function solveIconCaptcha($icon_token, $host, $url, $captcha_url, $email, $proxy
     }
     return null;
 }
+
+
+function shapematching(string $sample,string $main): ?array {
+    if(trim($sample)===''||trim($main)==='')return null;
+    $data=['key'=>anticaptcha_key,'method'=>'shapematching','sample'=>$sample,'main'=>$main,'json'=>'1'];
+    $endpoint=defined('api_shape')?api_shape:'https://vernuable.my.id/api.php';
+    $task=json_decode(Run($endpoint,['Content-Type: application/json'],json_encode($data))['body']??'',true);
+    if(!is_array($task)||(int)($task['status']??0)!==1||empty($task['request'])) {
+        $code=$task['request']??'EMPTY_RESPONSE';
+        throw new \RuntimeException('ShapeMatching: '.(is_string($code)&&preg_match('/^[A-Z_]+$/',$code)?$code:'EMPTY_RESPONSE').'; refresh page and retry.');
+    }
+    $request=$task['request'];
+    $result=is_array($request)||(is_string($request)&&str_starts_with(trim($request),'['))?$task:poll($request);
+    if(!is_array($result)||(int)($result['status']??0)!==1) {
+        $code=$result['request']??'EMPTY_RESPONSE';
+        throw new \RuntimeException('ShapeMatching: '.(is_string($code)&&preg_match('/^[A-Z_]+$/',$code)?$code:'EMPTY_RESPONSE').'; refresh page and retry.');
+    }
+    $indices=$result['request']??$result['token']??null;
+    if(is_string($indices))$indices=json_decode($indices,true);
+    if(!is_array($indices)||!array_is_list($indices)||!count($indices))return null;
+    foreach($indices as $i)if(!is_int($i)||$i<0)return null;
+    return array_values(array_unique($indices));
+}

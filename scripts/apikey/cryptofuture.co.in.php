@@ -233,12 +233,37 @@ function fp_ua() {
 }
 function fp_cookie_name($a) {return ($a['session_prefix']??'fp-').md5(strtolower($a['email']));}
 function fp_identity_file($a) {return fp_private().'/'.fp_cookie_name($a).'.json';}
+function bx_require_payload(array $fields): void {
+    if(!$fields)throw new \RuntimeException('Empty submission skipped; refresh page and retry.');
+    foreach($fields as $name=>$value) {
+        // Optional honeypots, two-factor fields and selectors may legitimately be blank.
+        if(preg_match('/^(?:csrf.*|token|claim_token|captcha_id|h-captcha-response|g-recaptcha-response|cf-turnstile-response|rs-response|c_captcha_response|pcaptcha_token|ic-token|ic-hf|ic-hp)$/i',(string)$name)
+            && (!is_scalar($value)||trim((string)$value)===''))
+            throw new \RuntimeException('Required value missing ('.$name.'); refresh page and retry.');
+    }
+}
+function fp_form_body(array $fields): string {
+    // Match the browser's repeated captcha_sel[] fields.
+    $selected=$fields['captcha_sel']??null;
+    unset($fields['captcha_sel']);
+    $body=http_build_query($fields);
+    if($selected!==null) {
+        if(!is_array($selected)||!array_is_list($selected))throw new RuntimeException('Invalid shape selections.');
+        foreach($selected as $token) {
+            if(!is_string($token)||trim($token)==='')throw new RuntimeException('Empty shape selection.');
+            $body.=($body!==''?'&':'').'captcha_sel%5B%5D='.urlencode($token);
+        }
+    }
+    return $body;
+}
 function fp_request($path,$a,$fields=null,$external=false,$json=false) {
     $url=fp_origin().$path;
+    if($fields!==null)bx_require_payload($fields);
     for($i=0;$i<6;$i++) {
         $headers=['accept: text/html,application/xhtml+xml,application/json','accept-language: en-US,en;q=0.9','user-agent: '.fp_ua()];
-        if($fields!==null)$headers=array_merge($headers,['content-type: '.($json?'application/json':'application/x-www-form-urlencoded'),'origin: '.fp_origin(),'referer: '.fp_origin().'/']);
-        $r=Run($url,$headers,$fields!==null?($json?json_encode($fields):http_build_query($fields)):null,'data',$a['proxy']?:null,2,fp_cookie_name($a));
+        if($path==='/faucet/captcha')$headers[]='x-requested-with: XMLHttpRequest';
+        if($fields!==null)$headers=array_merge($headers,['content-type: '.($json?'application/json':'application/x-www-form-urlencoded'),'origin: '.fp_origin(),'referer: '.fp_origin().(str_starts_with($path,'/faucet')?'/faucet':'/')]);
+        $r=Run($url,$headers,$fields!==null?($json?json_encode($fields):fp_form_body($fields)):null,'data',$a['proxy']?:null,2,fp_cookie_name($a));
         $status=(int)($r['info']['http_code']??0);
         if($status===403&&(str_contains($r['body']??'','Just a moment...')||str_contains($r['body']??'','cf-chl-')))throw new RuntimeException('Cloudflare browser verification required at '.parse_url($url,PHP_URL_PATH).'; account stopped for this run.');
         if($status===401&&$path==='/api/auth/me'){$r['url']=$url;return $r;}
@@ -252,7 +277,7 @@ function fp_request($path,$a,$fields=null,$external=false,$json=false) {
             }
             if(parse_url($next,PHP_URL_SCHEME)!=='https')throw new RuntimeException('Insecure site redirect stopped.');
             $url=$next;if(in_array($status,[301,302,303],true))$fields=null;continue;
-        }$r['url']=$url;return $r;
+        }if(trim((string)($r['body']??''))==='')throw new \RuntimeException('Empty server response; refresh page and retry with fresh form values.');$r['url']=$url;return $r;
     }throw new RuntimeException('Too many redirects.');
 }
 function fp_xpath($html) {
@@ -359,7 +384,7 @@ function fp_claim($a) {
         return ['wait'=>1,'reward'=>null,'shortlink_rewards'=>$links];
     }
     $reward=fp_new_reward($r['body']);
-    if(!$reward)throw new RuntimeException('Claim not confirmed: '.(fp_message($r['body'])?:'no reward message'));
+    if(!$reward)throw fp_claim_error('Claim not confirmed: '.(fp_message($r['body'])?:'no reward message'));
     fp_confirm($reward,$a,'Faucet');return ['wait'=>max(1,fp_wait($r['body'])),'reward'=>$reward,'shortlink_rewards'=>$links];
 }
 function fp_confirm($reward,$a,$kind) {
@@ -461,7 +486,7 @@ function fp_ourcoin_claim($a) {
         if((int)$m[1]>300)throw new RuntimeException('Long claim timer.');$wait=(int)$m[1]-(time()-$started);if($wait>0)sleep($wait);
     }
     $r=fp_request('/faucet/verify',$a,$fields);
-    if(!preg_match('/^([\d,.]+)\s+coins\s+has been added to your balance[.!]?$/i',trim(fp_message($r['body'])),$m))throw new RuntimeException('OurCoinCash claim not confirmed: '.(fp_message($r['body'])?:'no reward message'));
+    if(!preg_match('/^([\d,.]+)\s+coins\s+has been added to your balance[.!]?$/i',trim(fp_message($r['body'])),$m))throw fp_claim_error('OurCoinCash claim not confirmed: '.(fp_message($r['body'])?:'no reward message'));
     $amount=str_replace(',','',$m[1]);if(!is_numeric($amount)||(float)$amount<=0)throw new RuntimeException('Invalid coin reward.');
     $reward=['amount'=>$amount,'currency'=>'coins','points'=>0];fp_confirm($reward,$a,'Faucet');
     return ['wait'=>max(1,fp_wait($r['body'])),'reward'=>$reward];
@@ -494,9 +519,14 @@ function fp_lime_claim($a) {
     $verify=fp_json('/api/faucet/rotation-captcha/verify',$a,['session_id'=>$session,'angle'=>(int)$angle]);
     if(($verify['ok']??false)!==true||empty($verify['token']))throw new RuntimeException('LimeFaucet captcha was not verified.');
     $result=fp_json('/api/faucet/claim',$a,['captcha_token'=>$verify['token']]);
-    if(!isset($result['reward_crypto'])||!is_numeric($result['reward_crypto'])||(float)$result['reward_crypto']<=0||empty($result['currency']))throw new RuntimeException('LimeFaucet claim not confirmed.');
+    if(!isset($result['reward_crypto'])||!is_numeric($result['reward_crypto'])||(float)$result['reward_crypto']<=0||empty($result['currency']))throw fp_claim_error('LimeFaucet claim not confirmed.');
     $reward=['amount'=>(string)$result['reward_crypto'],'currency'=>strtolower($result['currency']),'points'=>(int)($result['points']??0)];
     fp_confirm($reward,$a,'Faucet');return ['wait'=>max(1,(int)($result['time_remaining_seconds']??1)),'reward'=>$reward];
+}
+function fp_claim_error(string $message): \RuntimeException {
+    $detail=preg_replace('/^.*?claim not confirmed:\s*/i','',$message);
+    $rejected=preg_match('/(?:payout processing failed|claim (?:failed|rejected|denied)|invalid (?:captcha|token)|captcha (?:incorrect|invalid|failed)|insufficient (?:funds|balance)|try again|already claimed)/i',$detail);
+    return new \RuntimeException($message,$rejected?4201:0);
 }
 function fp_run($accounts,$loop=true,$mode='faucet') {
     if(!$accounts){fp_log('INFO','Add an account first.');return;}$next=[];$failures=0;$stopped=false;$claims=0;$points=0;$totals=[];$shortlinks=0;
@@ -520,8 +550,8 @@ function fp_run($accounts,$loop=true,$mode='faucet') {
                 foreach($rewards as $reward){$points+=$reward['points'];$currency=$reward['currency'];$totals[$currency]=($totals[$currency]??0)+(float)$reward['amount'];}
             }
             catch(Throwable $e){
-                $failures++;$next[$i]=time()+5;
-                fp_log('ERROR',$e->getMessage().' | Consecutive failures '.$failures.'/3',$a['label']);
+                $validFailure=$e->getCode()===4201&&!fp_captcha_unsolvable($e);if($validFailure)$failures++;$next[$i]=time()+15;
+                fp_log($validFailure?'ERROR':'WAIT',$e->getMessage().($validFailure?' | Consecutive claim failures '.$failures.'/3':' | Refresh page and retry; claim failure count unchanged'),$a['label']);
                 if($failures>=3)$stopped=true;
             }
             finally{bx_live_finish();flock($lock,LOCK_UN);fclose($lock);}
@@ -535,7 +565,73 @@ function fp_run($accounts,$loop=true,$mode='faucet') {
     if($stopped){fp_log('ERROR','Stopped: three consecutive failures.');exit(1);}
 }
 function fp_input($prompt){$line=bx_live_readline($prompt);return $line===false?'0':trim($line);}
+function fp_shape_base64($image,$a) {
+    if(!is_string($image)||trim($image)==='')throw new \RuntimeException('Empty shape image; refresh page and retry.');
+    $encoded=$image;
+    if(preg_match('~^data:image/(?:png|jpeg|gif|webp);base64,([A-Za-z0-9+/=\r\n]+)$~',$image,$m))$encoded=$m[1];
+    elseif(str_starts_with($image,'/')||str_starts_with($image,'https://')) {
+        if(str_starts_with($image,'https://')&&parse_url($image,PHP_URL_HOST)!==fp_host())throw new \RuntimeException('Unexpected shape image host.');
+        $path=str_starts_with($image,'/')?$image:(parse_url($image,PHP_URL_PATH).(parse_url($image,PHP_URL_QUERY)?'?'.parse_url($image,PHP_URL_QUERY):''));
+        $image=base64_encode(fp_request($path,$a)['body']);$encoded=$image;
+    }
+    $raw=base64_decode($encoded,true);
+    if($raw===false||$raw===''||@getimagesizefromstring($raw)===false)throw new \RuntimeException('Invalid shape image; refresh page and retry.');
+    // Send the complete base64 payload (PNG starts iVBOR), without the data URI.
+    return $encoded;
+}
+function fp_shape_fields($html,$a,$fields) {
+    $nodes=fp_xpath($html)->query('//*[@id="capbox"]');
+    if(!$nodes->length) {
+        // Some faucet pages include empty placeholders even without a challenge.
+        foreach(['captcha_id','captcha_sel','captcha_sel[]'] as $name) {
+            if(isset($fields[$name])&&($fields[$name]===''||$fields[$name]===[]))unset($fields[$name]);
+        }
+        return $fields;
+    }
+    $node=$nodes->item(0);$url=$node->getAttribute('data-url');$csrf=$node->getAttribute('data-csrf-name');
+    if(!$csrf||empty($fields[$csrf]))throw new \RuntimeException('Shape CSRF missing; refresh page and retry.');
+    if(parse_url($url,PHP_URL_HOST)&&parse_url($url,PHP_URL_HOST)!==fp_host())throw new \RuntimeException('Unexpected shape challenge host.');
+    $path=parse_url($url,PHP_URL_PATH);
+    if($path!=='/faucet/captcha')throw new \RuntimeException('Unknown shape challenge endpoint.');
+    fp_log('INFO','Loading ShapeMatching challenge...',$a['label']);
+    $started=microtime(true);$r=fp_request($path,$a,[$csrf=>$fields[$csrf]]);
+    $d=json_decode($r['body'],true);
+    if(!is_array($d)||empty($d['ok'])||empty($d['csrf_hash'])||empty($d['id'])||empty($d['tokens'])||!is_array($d['tokens'])||!array_is_list($d['tokens']))throw new \RuntimeException('Empty or incomplete shape challenge; refresh page and retry.');
+    $fields[$csrf]=$d['csrf_hash'];
+    $sample=fp_shape_base64($d['sample']??'',$a);$main=fp_shape_base64($d['img']??'',$a);
+    fp_log('INFO','Solving ShapeMatching...',$a['label']);
+    $indices=\shapematching($sample,$main);
+    if(!is_array($indices)||!count($indices))throw new \RuntimeException('Empty shape solver response; refresh page and retry.');
+    $ttl=(int)($d['ttl']??60);
+    if($ttl<=0||microtime(true)-$started>=$ttl-2)throw new \RuntimeException('Shape challenge expired; refresh page and retry.');
+    $selected=[];
+    foreach($indices as $i) {
+        if(!is_int($i)||$i<0||!isset($d['tokens'][$i])||!is_string($d['tokens'][$i])||trim($d['tokens'][$i])==='')throw new \RuntimeException('Invalid shape selection; refresh page and retry.');
+        $selected[]=$d['tokens'][$i];
+    }
+    $fields['captcha_id']=$d['id'];$fields['captcha_sel']=array_values(array_unique($selected));
+    return $fields;
+}
+
+function fp_captcha_unsolvable(\Throwable $error): bool {
+    return preg_match('/\bERROR_CAPTCHA_UNSOLVABLE\b|\b(?:captcha|shapematching)\b[^\r\n]*\bunsolv(?:able|eable)\b/i',$error->getMessage())===1;
+}
+function fp_retry_captcha(callable $claim,array $account): array {
+    $retries=0;
+    while(true) {
+        try {return $claim();}
+        catch(\RuntimeException $error) {
+            if(!fp_captcha_unsolvable($error))throw $error;
+            $delay=min(30,3*++$retries);
+            fp_log('WAIT','Captcha unsolvable; reloading page and starting a fresh challenge in '.$delay.'s. Claim failure count unchanged.',$account['label']??'');
+            sleep($delay);
+        }
+    }
+}
 function fp_new_claim($a) {
+    return fp_retry_captcha(fn()=>fp_new_claim_once($a),$a);
+}
+function fp_new_claim_once($a) {
     if(!is_file(fp_identity_file($a))) fp_new_login($a);
     $r=fp_request('/faucet',$a);
     if(!str_contains($r['url'],'/faucet')){fp_new_login($a);$r=fp_request('/faucet',$a);}
@@ -546,9 +642,10 @@ function fp_new_claim($a) {
         fp_log('INFO','Claim Turnstile...',$a['label']);$fields['captcha']='turnstile';$fields['cf-turnstile-response']=fp_token(captcha($r['url'],$key,'turnstile'));
     }
     if(preg_match('/(?:var|let|const)\s+(?:timer|waitSeconds)\s*=\s*(\d+)/',$r['body'],$m)&&$m[1]>0){if($m[1]>300)return ['wait'=>(int)$m[1],'reward'=>null];fp_log('WAIT','Claim timer '.$m[1].'s',$a['label']);sleep((int)$m[1]);}
+    $fields=fp_shape_fields($r['body'],$a,$fields);
     $r=fp_request('/faucet/verify',$a,$fields);
     $reward=fp_new_reward($r['body']);
-    if(!$reward)throw new RuntimeException('Claim not confirmed: '.(fp_new_message($r['body'])?:'no server reward message'));
+    if(!$reward)throw fp_claim_error('Claim not confirmed: '.(fp_new_message($r['body'])?:'no server reward message'));
     fp_confirm($reward,$a,'Faucet');return ['wait'=>max(1,fp_wait($r['body'])),'reward'=>$reward];
 }
 function fp_new_reward($html) {

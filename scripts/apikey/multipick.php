@@ -1118,7 +1118,18 @@ function safeRequest($url, $host, $email = null, $proxy = null) {
     return $response;
 }
 
+function bx_require_payload(array $fields): void {
+    if(!$fields)throw new \RuntimeException('Empty submission skipped; refresh page and retry.');
+    foreach($fields as $name=>$value) {
+        // Optional honeypots, two-factor fields and selectors may legitimately be blank.
+        if(preg_match('/^(?:csrf.*|token|claim_token|h-captcha-response|g-recaptcha-response|cf-turnstile-response|rs-response|c_captcha_response|pcaptcha_token|ic-token|ic-hf|ic-hp)$/i',(string)$name)
+            && (!is_scalar($value)||trim((string)$value)===''))
+            throw new \RuntimeException('Required value missing ('.$name.'); refresh page and retry.');
+    }
+}
 function safeRequestpost($url,$host,$post,$html,$email,$proxy=null) {
+    parse_str($post,$fields);bx_require_payload($fields);
+    if(trim((string)$html)==='')throw new \RuntimeException('Empty page; refresh before submission.');
     $headers=array_merge(getFormHeaders($host,$html,$proxy,$email),['Content-Type: application/x-www-form-urlencoded','x-requested-with: XMLHttpRequest']);
     return Run($url,$headers,$post,'data',$proxy,2,$email);
 }
@@ -1278,6 +1289,7 @@ function payyload($html, $email, $host, $url, $ua, $password = null, $proxy = nu
     }
     
     if ($login || $faucet) {
+        if(trim((string)$csrf)==='')return null;
         if (!empty($csrf)) {
             $data['csrf_test_name'] = $csrf;
         }
@@ -1402,7 +1414,7 @@ function f_l($email, $proxy = null, $accountId = null, $host, $config) {
             $js = null;
             foreach ($matches[0] as $json) {
                 $decoded = json_decode($json, true);
-                if (isset($decoded['ret']) && $decoded['ret'] == 1) {
+                if (isset($decoded['ret'])) {
                     $js = $decoded;
                     break;
                 }
@@ -1413,7 +1425,7 @@ function f_l($email, $proxy = null, $accountId = null, $host, $config) {
             }
         }
         
-        return ['success' => isset($js) && (int)($js['ret'] ?? 0) === 1 && isset($js['reward']), 'timer' => 0];
+        return ['success' => isset($js) && (int)($js['ret'] ?? 0) === 1 && isset($js['reward']), 'claim_failed' => isset($js['ret']) && (int)$js['ret'] !== 1 && !empty($js['mes']), 'timer' => 0];
     }
     
     echo '['.$host.'] Page request failed: HTTP '.($response['info']['http_code']??0).PHP_EOL;
@@ -1592,8 +1604,8 @@ function pk_run($selected,$once=false,$attempt=null) {
                     pk_save_state($file,$next,!empty($result['success'])?'claimed':'cooldown');
                     pk_log($host,$id,(!empty($result['success'])?'Claim confirmed. ':'').'Next turn '.date('H:i:s',$next));
                 } else {
-                    $failures++;$next=time()+60;
-                    pk_save_state($file,$next,'failed');pk_log($host,$id,"Failed ($failures/3)");
+                    $validFailure=!empty($result['claim_failed']);if($validFailure)$failures++;$next=time()+60;
+                    pk_save_state($file,$next,$validFailure?'failed':'retry');pk_log($host,$id,$validFailure?"Claim failed ($failures/3)":'Refresh page and retry; claim failure count unchanged');
                     if($failures>=3) {echo "Stopped after 3 consecutive failures.\n";return 1;}
                 }
                 bx_live_finish();

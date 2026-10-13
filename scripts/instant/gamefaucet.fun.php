@@ -414,6 +414,12 @@ function fp_shortlink($a,$coin=null) {
             $key=fp_sitekey($r['body'],'h-captcha');
             if($key){$token=fp_token(captcha(fp_origin().$item['path'],$key,'hcaptcha'));$fields['captcha']='hcaptcha';$fields['g-recaptcha-response']=$token;$fields['h-captcha-response']=$token;}
             elseif($key=fp_sitekey($r['body'],'adslab-captcha')){$fields['captcha']='alcaptcha';$fields['alcaptcha-response']=fp_adslab($key,$a['label']);}
+            elseif(isset($fields['rscaptcha_token'])||str_contains($r['body'],'generated_captcha/')) {
+                fp_log('INFO','Shortlink RS captcha...',$a['label']);
+                $rs=rs_upsidedown($r['body'],$r['url']);
+                if(empty($rs['rs-response']))throw new RuntimeException('RS captcha solver returned no response; refresh page and retry.');
+                $fields['captcha']='rscaptcha';$fields['rscaptcha_response']=$rs['rs-response'];
+            }
             elseif(str_contains($r['body'],'id="selectCaptcha"'))throw new RuntimeException('Unsupported shortlink captcha.');
             $started=time();$r=fp_request($item['path'],$a,$fields,true);$external=$r['external_url']??'';
             if(!$external)throw new RuntimeException('Shortlink did not provide an external redirect.');
